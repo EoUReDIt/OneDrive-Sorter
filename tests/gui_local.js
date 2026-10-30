@@ -13,11 +13,18 @@ const root = path.join(tmp, 'OneDrive');
 fs.mkdirSync(root);
 for (const f of ['Example Resume.pdf', 'Employer Notes', 'Clearance Form.pdf', 'Course Deck.pptx']) fs.writeFileSync(path.join(root, f), 'x');
 fs.mkdirSync(path.join(root, 'Interview Folder'));
+// A plan as the MCP server would have saved it (proposal_*.csv plus a note beside it).
+const props = path.join(tmp, 'proposals');
+fs.mkdirSync(props);
+const pname = 'proposal_20261030_120000_000000.csv';
+fs.copyFileSync(path.join(__dirname, 'fixtures', 'sample_manifest.csv'), path.join(props, pname));
+fs.writeFileSync(path.join(props, pname.replace('.csv', '.json')),
+  JSON.stringify({ note: 'Claude says <img src=x onerror=alert(1)> hello', created: '2026-10-30T12:00:00', summary: { ready: 4, 'not selected': 1 } }));
 const exists = rel => fs.existsSync(path.join(root, ...rel.split('/')));
 
 function startServer() {
   const child = spawn(process.env.PYTHON || 'python3',
-    ['-u', '-m', 'sorter', 'serve', '--root', root, '--port', '0', '--log-dir', path.join(tmp, 'logs')], { cwd: repo });
+    ['-u', '-m', 'sorter', 'serve', '--root', root, '--port', '0', '--log-dir', path.join(tmp, 'logs'), '--proposals-dir', props], { cwd: repo });
   return new Promise((resolve, reject) => {
     let out = '';
     child.stdout.on('data', d => {
@@ -54,6 +61,14 @@ function startServer() {
     assert.ok(!page.url().includes('token'), 'token removed from the address bar');
     assert.ok((await page.innerText('#local-root')).includes('OneDrive'), 'root shown');
 
+    // Claude's proposal appears in the picker; its note is shown as plain text, never as markup.
+    await page.waitForFunction(() => document.getElementById('proposal-select').options.length === 1 && !document.getElementById('proposal-select').options[0].disabled, null, { timeout: 10000 });
+    await page.click('button:has-text("Load proposal")');
+    await page.waitForFunction(() => document.getElementById('log').innerText.includes('Loaded 5'), null, { timeout: 10000 });
+    assert.ok((await page.innerText('#proposal-note')).includes('<img src=x onerror=alert(1)>'), 'note shown literally');
+    assert.strictEqual(await page.locator('#proposal-note img').count(), 0, 'note was not rendered as HTML');
+    assert.ok(!exists('Career'), 'loading a proposal changed nothing on disk');
+    // The file-upload path still works too.
     await page.setInputFiles('#manifest-file', path.join(__dirname, 'fixtures', 'sample_manifest.csv'));
     await page.waitForFunction(() => document.getElementById('log').innerText.includes('Loaded 5'), null, { timeout: 10000 });
     assert.ok((await page.innerText('#log')).includes('1 need review'), 'flagged row reported by the backend');

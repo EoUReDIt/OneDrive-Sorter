@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from sorter import proposals
 from sorter.server import MAX_BODY, make_server
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample_manifest.csv"
@@ -18,9 +19,9 @@ def srv(tmp_path):
     for name in ("Example Resume.pdf", "Employer Notes", "Clearance Form.pdf", "Course Deck.pptx"):
         (root / name).write_text("x")
     (root / "Interview Folder").mkdir()
-    httpd = make_server(root, tmp_path / "logs", token="t0k")
+    httpd = make_server(root, tmp_path / "logs", token="t0k", proposals_dir=tmp_path / "props")
     threading.Thread(target=lambda: httpd.serve_forever(poll_interval=0.02), daemon=True).start()
-    httpd.root, httpd.port = root, httpd.server_address[1]
+    httpd.root, httpd.port, httpd.props = root, httpd.server_address[1], tmp_path / "props"
     yield httpd
     httpd.shutdown()
     httpd.server_close()
@@ -214,3 +215,33 @@ def test_path_escape_in_manifest_is_unsafe_even_if_selected(srv):
     raw(srv, "POST", "/api/manifest", {"csv": csv})
     s, data, _ = raw(srv, "POST", "/api/check", {"selected": [1]})
     assert data["items"][0]["state"] == "unsafe path"
+
+
+# ---- proposals from Claude -------------------------------------------------------------------
+
+def test_proposals_list_load_and_apply(srv):
+    assert raw(srv, "GET", "/api/proposals")[1] == {"proposals": []}
+    name = proposals.save(FIXTURE.read_text(), "first pass <b>x</b>", {"ready": 4}, srv.props)
+    s, data, _ = raw(srv, "GET", "/api/proposals")
+    assert [p["name"] for p in data["proposals"]] == [name] and data["proposals"][0]["note"] == "first pass <b>x</b>"
+
+    s, data, _ = raw(srv, "POST", "/api/proposal", {"name": name})
+    assert s == 200 and len(data["rows"]) == 5 and data["note"] == "first pass <b>x</b>"
+    assert not (srv.root / "Career").exists()                       # loading a proposal moves nothing
+
+    raw(srv, "POST", "/api/execute", {"selected": [1, 2, 3, 4], "delay": 0})
+    assert wait_done(srv)["moved"] == 4
+
+
+@pytest.mark.parametrize("name", ["../x.csv", "proposal_x.csv", "moves_1.jsonl", "", None, 5])
+def test_proposal_names_are_validated(srv, name):
+    assert raw(srv, "POST", "/api/proposal", {"name": name})[0] == 400
+
+
+def test_unknown_proposal_is_404(srv):
+    assert raw(srv, "POST", "/api/proposal", {"name": "proposal_20200101_000000_000000.csv"})[0] == 404
+
+
+def test_proposal_endpoints_need_the_token(srv):
+    assert raw(srv, "GET", "/api/proposals", token=None)[0] == 401
+    assert raw(srv, "POST", "/api/proposal", {"name": "x"}, token=None)[0] == 401

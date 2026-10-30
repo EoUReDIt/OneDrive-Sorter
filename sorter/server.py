@@ -18,7 +18,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from . import __version__, engine
+from . import __version__, engine, proposals
 from .manifest import ManifestError, parse_manifest
 from .rules import REQUIRED_COLUMNS, RULES
 
@@ -73,8 +73,9 @@ class Job:
 
 
 class State:
-    def __init__(self, root, log_dir, token):
+    def __init__(self, root, log_dir, token, proposals_dir=None):
         self.root = engine.open_root(root)
+        self.proposals_dir = Path(proposals_dir) if proposals_dir else proposals.default_dir()
         self.log_dir = Path(log_dir) if log_dir else Path.home() / ".onedrive-sorter" / "logs"
         self.token = token
         self.rows, self.job = [], None
@@ -92,6 +93,15 @@ class State:
         with self.lock:
             self.rows = parse_manifest(csv_text)
             return [row_json(r) for r in self.rows]
+
+    def load_proposal(self, name):
+        try:
+            text, meta = proposals.read(self.proposals_dir, name)
+        except ValueError:
+            raise HttpError(400, "invalid proposal name")
+        except FileNotFoundError:
+            raise HttpError(404, "no such proposal")
+        return self.load(text), meta.get("note", "")
 
     def check(self, numbers):
         with self.lock:
@@ -223,6 +233,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(200, st.job.snapshot() if st.job else {"status": "idle"})
                 if path == "/api/logs":
                     return self._json(200, {"logs": st.logs()})
+                if path == "/api/proposals":
+                    return self._json(200, {"proposals": proposals.list_all(st.proposals_dir)})
                 raise HttpError(404, "not found")
             data = self._body()
             if path == "/api/manifest":
@@ -230,6 +242,9 @@ class Handler(BaseHTTPRequestHandler):
                 if not isinstance(text, str):
                     raise HttpError(400, "csv must be text")
                 return self._json(200, {"rows": st.load(text)})
+            if path == "/api/proposal":
+                rows, note = st.load_proposal(data.get("name"))
+                return self._json(200, {"rows": rows, "note": note})
             if path == "/api/check":
                 return self._json(200, {"items": st.check(self._numbers(data))})
             if path == "/api/execute":
@@ -270,17 +285,17 @@ class Handler(BaseHTTPRequestHandler):
     do_OPTIONS = do_PUT = do_DELETE = do_PATCH = do_HEAD = _refuse
 
 
-def make_server(root, log_dir=None, host="127.0.0.1", port=0, token=None):
+def make_server(root, log_dir=None, host="127.0.0.1", port=0, token=None, proposals_dir=None):
     if host not in LOOPBACK:
         raise ValueError("the backend only listens on a loopback address")
     httpd = ThreadingHTTPServer((host, port), Handler)
     httpd.daemon_threads = True
-    httpd.state = State(root, log_dir, token or secrets.token_urlsafe(32))
+    httpd.state = State(root, log_dir, token or secrets.token_urlsafe(32), proposals_dir)
     return httpd
 
 
-def serve(root, port=8765, log_dir=None):
-    httpd = make_server(root, log_dir, port=port)
+def serve(root, port=8765, log_dir=None, proposals_dir=None):
+    httpd = make_server(root, log_dir, port=port, proposals_dir=proposals_dir)
     url = f"http://127.0.0.1:{httpd.server_address[1]}/#token={httpd.state.token}"
     print(f"Sorting: {httpd.state.root}\nOpen this address in your browser (it contains this run's token):\n{url}\n"
           "Press Ctrl+C to stop.", flush=True)

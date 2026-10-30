@@ -57,7 +57,7 @@ silently break an earlier part.
 | --- | --- | --- |
 | 1 (done) | Engine, rules, manifest loader, command line, undo log | Engine tests on 3 operating systems; the existing browser page still passes its smoke test; the browser copy of the rules must match the Python copy |
 | 2 (done) | Local backend (HTTP on localhost, token, origin checks) and the page switched to call it | 23 API tests against a real server, including hostile-request tests; the page driven end to end in a browser against the real backend (move, then undo); the old cloud-mode page smoke test still passes |
-| 3 | MCP server over stdio: read-only tools (rules, list a folder, validate a manifest) and a *propose plan* tool that stores a pending plan, never applies it | Protocol test: start the server, list tools, call each one; confirm there is no tool that moves anything |
+| 3 (done) | MCP server over stdio: read-only tools (rules, list a folder, validate a manifest) and a *propose plan* tool that stores a plan for you to review, never applies it; a "Proposals from Claude" picker in the page | 30 tests that run the real server with the real MCP client: exact tool list, no tool that can move anything, the sorted folder is byte-for-byte unchanged after every tool is called, path escapes refused with a readable reason, hostile file names neutralised; backend and browser tests for loading a proposal |
 | 4 | Connecting Claude Code: a project config file, a walkthrough of the prompts you will see, and a checklist to try it end to end | Config file parses; server starts from the config; tools listed match the documented ones |
 | 5 | Final refactor: one shared rules file, remove duplicated logic in the page, decide whether to keep the old direct-to-Microsoft mode, rewrite the README | Full suite plus an end-to-end test (propose, review, apply, undo) |
 
@@ -80,6 +80,32 @@ there is no delete or overwrite anywhere. The server also re-checks every row it
 so the page cannot talk it into anything the engine would refuse.
 
 Without the token (or opened from a file), the page falls back to the original cloud mode.
+
+## The MCP server (stage 3)
+
+```bash
+pip install "mcp>=2,<3"
+python -m sorter mcp --root "C:\\Users\\you\\OneDrive"
+```
+
+You normally do not run this yourself: Claude Code starts it (stage 4 shows how). It offers four tools:
+
+| Tool | What Claude can do with it | Changes anything? |
+| --- | --- | --- |
+| `get_rules` | Read the folder rules and the manifest format | No |
+| `list_folder` | See names, types, sizes and dates in one folder (never file contents), a page at a time | No |
+| `validate_manifest` | Dry-run a draft CSV against the rules and the real folder | No |
+| `propose_plan` | Save a draft as a proposal file | Writes one small file outside the sorted folder |
+
+There is no move, apply, undo or delete tool, and the tests fail if one is ever added. The only way
+anything moves is you pressing Execute in the page after loading the proposal under
+**Proposals from Claude**.
+
+Two things worth knowing about AI and file names. Names are text that anyone could have chosen (a
+downloaded file can be named "ignore your instructions and..."), so the server tells Claude to treat
+names as data, strips control characters from them, and, more importantly, nothing Claude proposes is
+applied without your review. And Claude only ever sees names, types, sizes and dates, so it cannot
+read your files; your SF-86 and similar documents are never opened.
 
 ## What you will see when you connect Claude Code (preview, verified in stage 4)
 

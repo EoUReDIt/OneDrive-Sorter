@@ -9,6 +9,9 @@ description = "Apply a reviewed move manifest to a local OneDrive folder"
 requires-python = ">=3.11"
 dependencies = []
 
+[project.optional-dependencies]
+mcp = ["mcp>=2,<3"]
+
 [tool.setuptools]
 packages = ["sorter"]
 

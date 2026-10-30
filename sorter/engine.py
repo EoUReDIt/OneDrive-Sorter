@@ -60,6 +60,9 @@ def _segments(path: str) -> list[str]:
     return segs
 
 
+safe_segments = _segments
+
+
 def _inside(root: Path, p) -> bool:
     real = os.path.realpath(p)
     try:

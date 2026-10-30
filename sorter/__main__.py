@@ -28,6 +28,10 @@ def main(argv=None) -> int:
     sv.add_argument("--root", required=True)
     sv.add_argument("--port", type=int, default=8765, help="0 picks a free port")
     sv.add_argument("--log-dir")
+    sv.add_argument("--proposals-dir", help="where Claude's proposed plans are read from")
+    mc = sub.add_parser("mcp", help="MCP server over stdio for Claude Code / Claude Desktop (propose-only)")
+    mc.add_argument("--root", required=True)
+    mc.add_argument("--proposals-dir")
     u = sub.add_parser("undo")
     u.add_argument("log")
     u.add_argument("--root", required=True)
@@ -37,7 +41,15 @@ def main(argv=None) -> int:
     try:
         if a.cmd == "serve":
             from .server import serve
-            serve(a.root, a.port, a.log_dir)
+            serve(a.root, a.port, a.log_dir, a.proposals_dir)
+            return 0
+        if a.cmd == "mcp":
+            try:
+                from .mcp_server import run
+            except ModuleNotFoundError:
+                print("The MCP server needs the 'mcp' package: pip install \"mcp>=2,<3\"", file=sys.stderr)
+                return 2
+            run(a.root, a.proposals_dir)          # nothing may be printed to stdout here
             return 0
         if a.cmd == "undo":
             rep = engine.undo(a.log, a.root, delay=a.delay)

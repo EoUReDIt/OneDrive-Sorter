@@ -38,6 +38,13 @@
   <div class="card">
     <h3>2. Load manifest</h3>
     <input type="file" id="manifest-file" accept=".csv" onchange="loadManifest(this.files[0])">
+    <div id="proposals-box" style="display:none; margin: 8px 0;">
+      <strong>Proposals from Claude:</strong>
+      <select id="proposal-select"></select>
+      <button onclick="loadProposal()">Load proposal</button>
+      <button onclick="refreshProposals()">Refresh</button>
+      <div id="proposal-note"></div>
+    </div>
     <p id="manifest-summary"></p>
     <table id="plan"><thead></thead><tbody></tbody></table>
   </div>
@@ -359,12 +366,13 @@ async function detectLocal() {
   const slider = document.getElementById('rate-slider');
   slider.min = 0; slider.max = 2000; slider.step = 50; slider.value = 250; updateRate(250);
   document.getElementById('btn-undo').textContent = 'Undo last run';
+  document.getElementById('proposals-box').style.display = '';
+  refreshProposals();
   log('Local mode: ' + local.root);
   refreshButtons();
 }
-function loadManifestLocal(text) {
-  api('POST', 'api/manifest', { csv: text }).then(data => {
-    rows = data.rows.map(r => ({
+function setLocalRows(serverRows) {
+    rows = serverRows.map(r => ({
       n: r.n, SourceFile: r.fields.SourceFile, DestinationFolder: r.fields.DestinationFolder,
       destFolder: r.dest_folder, Confidence: r.fields.Confidence, selected: r.selected, problems: r.problems,
       state: r.problems.length ? 'needs review' : 'not checked', cls: r.problems.length ? 'warn' : '',
@@ -373,7 +381,33 @@ function loadManifestLocal(text) {
     lastLog = '';
     log(`Loaded ${rows.length} manifest row(s); ${rows.filter(r => r.problems.length).length} need review.`);
     render(); refreshButtons();
-  }).catch(e => log('Manifest rejected: ' + e.message));
+}
+function loadManifestLocal(text) {
+  api('POST', 'api/manifest', { csv: text }).then(data => setLocalRows(data.rows))
+    .catch(e => log('Manifest rejected: ' + e.message));
+}
+async function refreshProposals() {
+  try {
+    const data = await api('GET', 'api/proposals');
+    const sel = document.getElementById('proposal-select');
+    sel.textContent = '';
+    data.proposals.forEach(p => {
+      const o = document.createElement('option');
+      o.value = p.name;                                           // all of this text is untrusted: text only
+      o.textContent = `${p.created || p.name} (${Object.values(p.summary || {}).reduce((a, b) => a + b, 0)} rows)`;
+      sel.appendChild(o);
+    });
+    if (!data.proposals.length) { const o = document.createElement('option'); o.textContent = 'none yet'; o.disabled = true; sel.appendChild(o); }
+  } catch (e) { log('Could not list proposals: ' + e.message); }
+}
+async function loadProposal() {
+  const name = document.getElementById('proposal-select').value;
+  if (!name) return;
+  try {
+    const data = await api('POST', 'api/proposal', { name });
+    document.getElementById('proposal-note').textContent = data.note ? 'Claude\'s note: ' + data.note : '';
+    setLocalRows(data.rows);
+  } catch (e) { log('Could not load proposal: ' + e.message); }
 }
 async function runCheckLocal() {
   running = true; refreshButtons(); log('Check started (read-only).');
