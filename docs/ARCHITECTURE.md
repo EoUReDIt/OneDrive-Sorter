@@ -88,13 +88,15 @@ pip install "mcp>=2,<3"
 python -m sorter mcp --root "C:\\Users\\you\\OneDrive"
 ```
 
-You normally do not run this yourself: Claude Code starts it (stage 4 shows how). It offers four tools:
+You normally do not run this yourself: Claude Code starts it (stage 4 shows how). It offers six tools:
 
 | Tool | What Claude can do with it | Changes anything? |
 | --- | --- | --- |
 | `get_rules` | Read the folder rules and the manifest format | No |
 | `list_folder` | See names, types, sizes and dates in one folder (never file contents), a page at a time | No |
 | `validate_manifest` | Dry-run a draft CSV against the rules and the real folder | No |
+| `list_context_files` | See the names of the optional background files you chose to share (off by default) | No |
+| `read_context_file` | Read one of those files; advisory only, never overrides the rules or you | No |
 | `propose_plan` | Save a draft as a proposal file | Writes one small file outside the sorted folder |
 
 There is no move, apply, undo or delete tool, and the tests fail if one is ever added. The only way
@@ -114,6 +116,25 @@ Verified against Claude Code's current documentation and written up step by step
 (skipped if you add the server yourself with `claude mcp add`), then a permission prompt each time
 Claude wants to use one of the tools, unless you allow-list the read-only ones.
 
+## Context files (added after stage 5)
+
+An optional, advisory set of background documents for AI tools, so what the project is and how to use it
+survives long after a chat has ended.
+
+- **Where they live:** the built-in guides shipped in `sorter/context/` (README, testing guide, usage guide for
+  AI tools), or any folder of plain text files the user points to (for example a copy kept in a shared AI
+  workspace). Sources of truth are the root `README.md`, `docs/TESTING.md` and `docs/USAGE_FOR_AI.md`;
+  `tools/sync.py` refreshes the bundled copies and a test enforces it.
+- **How the user controls it:** the page has a checkbox and a location selector (local mode only). The
+  backend validates the folder and writes `~/.onedrive-sorter/config.json`. The MCP server is a separate
+  process, so it re-reads that file on every call; changes apply immediately.
+- **How the AI uses it:** `list_context_files` and `read_context_file` (read-only). Results carry a reminder
+  that the material is reference only. Only `.md`, `.txt`, `.csv` and `.json` files directly inside the folder,
+  up to 200 KB each and 50 files, are served; links, sub-folders and other types are not.
+- **Why it cannot override anything:** it is text handed to Claude, not configuration. The rules, path
+  confinement, no-overwrite and the human Execute step are enforced in code that no context file can reach, and a
+  test feeds the server a hostile context file to prove the limits hold.
+
 ## Decisions and open questions
 
 - Language: Python (standard library only) for the engine and backend, so it runs on Windows, macOS and
@@ -122,7 +143,8 @@ Claude wants to use one of the tools, unless you allow-list the read-only ones.
   who cannot or do not want to run anything locally. It needs an Azure app registration and has no Claude
   integration. The page keeps a copy of the rules for it; a test fails if the copy drifts.
 - The page exists twice: `sorter/web/index.html` (served by the backend, packaged) and `index.html` at the
-  root (served by GitHub Pages). Edit the first, run `python tools/sync_page.py`; a test enforces it.
+  root (served by GitHub Pages). Edit the first, run `python tools/sync.py`; a test enforces it. The same script refreshes the guides
+  bundled for AI tools in `sorter/context/`.
 - Linux has no official OneDrive sync client; the community client or an rclone mount would be needed.
 - Files that are "online only" (not downloaded) can be moved without downloading them. Reading their
   contents would download them, so the plan is to classify from names and metadata only.

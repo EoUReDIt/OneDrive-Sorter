@@ -35,6 +35,26 @@
     </div>
   </div>
 
+  <div class="card" id="card-context" style="display:none">
+    <h3>Context files for AI tools (optional)</h3>
+    <p>Guides and notes (README, testing and usage guides, or your own) that Claude and other AI tools can read
+       for background, including in future chats. They are <strong>advisory</strong>: they never override what you
+       or Claude decide, the folder rules, or the safety limits. Off unless you turn it on.</p>
+    <label><input type="checkbox" id="ctx-enabled" onchange="saveContext()"> There are context files &mdash; share them with AI tools</label>
+    <div class="controls">
+      <label>Where:
+        <select id="ctx-location" onchange="saveContext()">
+          <option value="builtin">Built-in guides (shipped with this app)</option>
+          <option value="custom">Another folder on this computer&hellip;</option>
+        </select>
+      </label>
+      <input id="ctx-path" size="55" style="display:none" placeholder="Full path to the folder, e.g. C:\Users\you\OneDrive\AI Shared Workspace\OneDrive Sorter">
+      <button id="ctx-apply" onclick="saveContext()" style="display:none">Use this folder</button>
+    </div>
+    <div id="ctx-status"></div>
+    <ul id="ctx-files"></ul>
+  </div>
+
   <div class="card">
     <h3>2. Load manifest</h3>
     <input type="file" id="manifest-file" accept=".csv" onchange="loadManifest(this.files[0])">
@@ -366,6 +386,8 @@ async function detectLocal() {
   const slider = document.getElementById('rate-slider');
   slider.min = 0; slider.max = 2000; slider.step = 50; slider.value = 250; updateRate(250);
   document.getElementById('btn-undo').textContent = 'Undo last run';
+  document.getElementById('card-context').style.display = '';
+  loadContext();
   document.getElementById('proposals-box').style.display = '';
   refreshProposals();
   log('Local mode: ' + local.root);
@@ -381,6 +403,42 @@ function setLocalRows(serverRows) {
     lastLog = '';
     log(`Loaded ${rows.length} manifest row(s); ${rows.filter(r => r.problems.length).length} need review.`);
     render(); refreshButtons();
+}
+// Context files: a checkbox and a location choice. The server validates the folder and remembers the choice
+// in a settings file that the MCP server re-reads on every call. File names and messages are untrusted text.
+function showContext(c) {
+  document.getElementById('ctx-enabled').checked = c.enabled;
+  document.getElementById('ctx-location').value = c.location;
+  const custom = c.location === 'custom';
+  document.getElementById('ctx-path').style.display = custom ? '' : 'none';
+  document.getElementById('ctx-apply').style.display = custom ? '' : 'none';
+  if (custom && c.path) document.getElementById('ctx-path').value = c.path;
+  const list = document.getElementById('ctx-files'); list.textContent = '';
+  c.files.forEach(f => { const li = document.createElement('li'); li.textContent = `${f.name} (${f.size} bytes)`; list.appendChild(li); });
+  const status = !c.enabled ? 'Not shared. AI tools see no context files.'
+    : c.problem ? c.problem : `Sharing ${c.files.length} file(s) with AI tools. Changes apply immediately, with no restart.`;
+  document.getElementById('ctx-status').textContent = status + (c.warning ? ' ' + c.warning : '');
+}
+async function loadContext() {
+  try { showContext(await api('GET', 'api/context')); } catch (e) { log('Could not read context settings: ' + e.message); }
+}
+async function saveContext() {
+  const location = document.getElementById('ctx-location').value;
+  document.getElementById('ctx-path').style.display = location === 'custom' ? '' : 'none';
+  document.getElementById('ctx-apply').style.display = location === 'custom' ? '' : 'none';
+  if (location === 'custom' && !document.getElementById('ctx-path').value.trim()) {
+    document.getElementById('ctx-status').textContent = 'Type the full path of the folder, then press "Use this folder".';
+    return;                                              // nothing to save until there is a path
+  }
+  try {
+    showContext(await api('POST', 'api/context', {
+      enabled: document.getElementById('ctx-enabled').checked, location,
+      path: document.getElementById('ctx-path').value
+    }));
+  } catch (e) {
+    document.getElementById('ctx-status').textContent = 'Not saved: ' + e.message;
+    try { const keep = await api('GET', 'api/context'); document.getElementById('ctx-enabled').checked = keep.enabled; } catch (_) {}
+  }
 }
 function loadManifestLocal(text) {
   api('POST', 'api/manifest', { csv: text }).then(data => setLocalRows(data.rows))

@@ -20,11 +20,19 @@ const pname = 'proposal_20261030_120000_000000.csv';
 fs.copyFileSync(path.join(__dirname, 'fixtures', 'sample_manifest.csv'), path.join(props, pname));
 fs.writeFileSync(path.join(props, pname.replace('.csv', '.json')),
   JSON.stringify({ note: 'Claude says <img src=x onerror=alert(1)> hello', created: '2026-10-30T12:00:00', summary: { ready: 4, 'not selected': 1 } }));
+// A folder of the user's own context files, one with a hostile name.
+const ctxDir = path.join(tmp, 'my context');
+fs.mkdirSync(ctxDir);
+fs.writeFileSync(path.join(ctxDir, 'notes.md'), 'past decision');
+const evilName = '<img src=x onerror=alert(1)>.md';
+try { fs.writeFileSync(path.join(ctxDir, evilName), 'x'); } catch (e) { /* not all file systems allow it */ }
+const cfgFile = path.join(tmp, 'config.json');
+const cfg = () => fs.existsSync(cfgFile) ? JSON.parse(fs.readFileSync(cfgFile, 'utf8')).context : null;
 const exists = rel => fs.existsSync(path.join(root, ...rel.split('/')));
 
 function startServer() {
   const child = spawn(process.env.PYTHON || 'python3',
-    ['-u', '-m', 'sorter', 'serve', '--root', root, '--port', '0', '--log-dir', path.join(tmp, 'logs'), '--proposals-dir', props], { cwd: repo });
+    ['-u', '-m', 'sorter', 'serve', '--root', root, '--port', '0', '--log-dir', path.join(tmp, 'logs'), '--proposals-dir', props, '--config', cfgFile], { cwd: repo });
   return new Promise((resolve, reject) => {
     let out = '';
     child.stdout.on('data', d => {
@@ -60,6 +68,39 @@ function startServer() {
     assert.strictEqual(await page.isVisible('#card-cloud'), false, 'cloud card hidden in local mode');
     assert.ok(!page.url().includes('token'), 'token removed from the address bar');
     assert.ok((await page.innerText('#local-root')).includes('OneDrive'), 'root shown');
+
+    // Context files: off by default; the checkbox and the selector save a setting the MCP server re-reads.
+    assert.strictEqual(await page.isVisible('#card-context'), true, 'context card shown in local mode');
+    assert.strictEqual(await page.isChecked('#ctx-enabled'), false, 'context off by default');
+    assert.ok((await page.innerText('#ctx-status')).includes('Not shared'), 'status says not shared');
+    assert.strictEqual(cfg(), null, 'viewing creates no settings file');
+
+    await page.check('#ctx-enabled');
+    await page.waitForFunction(() => document.getElementById('ctx-status').innerText.includes('Sharing'), null, { timeout: 10000 });
+    const builtin = await page.innerText('#ctx-files');
+    for (const f of ['README.md', 'TESTING.md', 'USAGE_FOR_AI.md']) assert.ok(builtin.includes(f), 'built-in guide listed: ' + f);
+    assert.deepStrictEqual(cfg(), { enabled: true, location: 'builtin', path: '' }, 'saved to the settings file');
+
+    await page.selectOption('#ctx-location', 'custom');
+    await page.waitForSelector('#ctx-path', { state: 'visible' });
+    assert.ok((await page.innerText('#ctx-status')).includes('Type the full path'), 'asks for a path instead of failing');
+    assert.strictEqual(cfg().location, 'builtin', 'nothing saved until there is a path');
+    await page.fill('#ctx-path', path.join(tmp, 'does not exist'));
+    await page.click('#ctx-apply');
+    await page.waitForFunction(() => document.getElementById('ctx-status').innerText.includes('Not saved'), null, { timeout: 10000 });
+    assert.ok((await page.innerText('#ctx-status')).toLowerCase().includes('not found'), 'bad folder explained');
+    assert.strictEqual(cfg().location, 'builtin', 'bad choice was not saved');
+
+    await page.fill('#ctx-path', ctxDir);
+    await page.click('#ctx-apply');
+    await page.waitForFunction(() => document.getElementById('ctx-files').innerText.includes('notes.md'), null, { timeout: 10000 });
+    assert.deepStrictEqual(cfg(), { enabled: true, location: 'custom', path: ctxDir }, 'custom folder saved');
+    assert.strictEqual(await page.locator('#ctx-files img').count(), 0, 'file names are shown as text, never as markup');
+
+    await page.uncheck('#ctx-enabled');
+    await page.waitForFunction(() => document.getElementById('ctx-status').innerText.includes('Not shared'), null, { timeout: 10000 });
+    assert.strictEqual(cfg().enabled, false, 'turned off again');
+    assert.strictEqual(await page.locator('#ctx-files li').count(), 0, 'no files listed when off');
 
     // Claude's proposal appears in the picker; its note is shown as plain text, never as markup.
     await page.waitForFunction(() => document.getElementById('proposal-select').options.length === 1 && !document.getElementById('proposal-select').options[0].disabled, null, { timeout: 10000 });

@@ -19,9 +19,11 @@ def srv(tmp_path):
     for name in ("Example Resume.pdf", "Employer Notes", "Clearance Form.pdf", "Course Deck.pptx"):
         (root / name).write_text("x")
     (root / "Interview Folder").mkdir()
-    httpd = make_server(root, tmp_path / "logs", token="t0k", proposals_dir=tmp_path / "props")
+    httpd = make_server(root, tmp_path / "logs", token="t0k", proposals_dir=tmp_path / "props",
+                        config_path=tmp_path / "config.json")
     threading.Thread(target=lambda: httpd.serve_forever(poll_interval=0.02), daemon=True).start()
     httpd.root, httpd.port, httpd.props = root, httpd.server_address[1], tmp_path / "props"
+    httpd.cfg_file, httpd.tmp = tmp_path / "config.json", tmp_path
     yield httpd
     httpd.shutdown()
     httpd.server_close()
@@ -245,3 +247,74 @@ def test_unknown_proposal_is_404(srv):
 def test_proposal_endpoints_need_the_token(srv):
     assert raw(srv, "GET", "/api/proposals", token=None)[0] == 401
     assert raw(srv, "POST", "/api/proposal", {"name": "x"}, token=None)[0] == 401
+
+
+# ---- optional context files (checkbox + selector in the page) ---------------------------------
+
+def make_ctx(srv, name="ctx"):
+    d = srv.tmp / name
+    d.mkdir()
+    (d / "notes.md").write_text("past decision")
+    (d / "binary.exe").write_bytes(b"MZ")
+    return d
+
+
+def test_context_defaults_to_off(srv):
+    s, data, _ = raw(srv, "GET", "/api/context")
+    assert s == 200 and data["enabled"] is False and data["files"] == [] and data["location"] == "builtin"
+    assert not srv.cfg_file.exists()                                  # reading creates nothing
+
+
+def test_choose_a_custom_folder_and_it_is_remembered(srv):
+    d = make_ctx(srv)
+    s, data, _ = raw(srv, "POST", "/api/context", {"enabled": True, "location": "custom", "path": str(d)})
+    assert s == 200 and data["enabled"] and [f["name"] for f in data["files"]] == ["notes.md"]
+    saved = json.loads(srv.cfg_file.read_text())["context"]
+    assert saved == {"enabled": True, "location": "custom", "path": str(d)}
+    assert raw(srv, "GET", "/api/context")[1]["files"][0]["name"] == "notes.md"
+
+
+def test_builtin_location_needs_no_path(srv):
+    s, data, _ = raw(srv, "POST", "/api/context", {"enabled": True, "location": "builtin"})
+    assert s == 200 and data["location"] == "builtin" and data["problem"] == ""
+
+
+def test_unusable_choice_is_rejected_and_nothing_is_saved(srv):
+    d = make_ctx(srv)
+    raw(srv, "POST", "/api/context", {"enabled": True, "location": "custom", "path": str(d)})
+    before = srv.cfg_file.read_text()
+    s, data, _ = raw(srv, "POST", "/api/context", {"enabled": True, "location": "custom", "path": str(srv.tmp / "gone")})
+    assert s == 400 and "not found" in data["error"].lower()
+    assert raw(srv, "POST", "/api/context", {"enabled": True, "location": "custom", "path": "  "})[0] == 400
+    assert srv.cfg_file.read_text() == before
+
+
+def test_turning_it_off_always_works_even_if_the_folder_has_vanished(srv):
+    raw(srv, "POST", "/api/context", {"enabled": True, "location": "custom", "path": str(make_ctx(srv))})
+    s, data, _ = raw(srv, "POST", "/api/context", {"enabled": False, "location": "custom", "path": str(srv.tmp / "gone")})
+    assert s == 200 and data["enabled"] is False and data["files"] == []
+
+
+@pytest.mark.parametrize("body", [{}, {"enabled": "yes"}, {"enabled": True, "location": "elsewhere"},
+                                  {"enabled": True, "location": "custom", "path": 5},
+                                  {"enabled": True, "location": "custom", "path": "x" * 2000}])
+def test_context_inputs_are_validated(srv, body):
+    assert raw(srv, "POST", "/api/context", body)[0] == 400
+
+
+def test_folder_inside_the_sorted_root_gets_a_warning(srv):
+    inside = srv.root / "AI Shared Workspace"
+    inside.mkdir()
+    (inside / "guide.md").write_text("x")
+    s, data, _ = raw(srv, "POST", "/api/context", {"enabled": True, "location": "custom", "path": str(inside)})
+    assert s == 200 and "inside the folder being sorted" in data["warning"]
+    outside = raw(srv, "POST", "/api/context", {"enabled": True, "location": "custom", "path": str(make_ctx(srv, "elsewhere"))})[1]
+    assert outside["warning"] == ""
+
+
+def test_context_endpoints_need_the_token_and_do_not_touch_the_sorted_folder(srv):
+    assert raw(srv, "GET", "/api/context", token=None)[0] == 401
+    assert raw(srv, "POST", "/api/context", {"enabled": False}, token=None)[0] == 401
+    before = sorted(p.name for p in srv.root.rglob("*"))
+    raw(srv, "POST", "/api/context", {"enabled": True, "location": "custom", "path": str(make_ctx(srv))})
+    assert sorted(p.name for p in srv.root.rglob("*")) == before

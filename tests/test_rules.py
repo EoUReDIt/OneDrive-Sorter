@@ -2,6 +2,8 @@ import json
 import re
 from pathlib import Path
 
+import pytest
+
 from sorter.rules import REQUIRED_COLUMNS, RULES, validate_row
 
 
@@ -59,4 +61,24 @@ def test_root_page_matches_the_packaged_page():
     """GitHub Pages serves the root index.html; the package serves sorter/web/index.html."""
     root = Path(__file__).parent.parent
     assert (root / "index.html").read_bytes() == (root / "sorter" / "web" / "index.html").read_bytes(), \
-        "run: python tools/sync_page.py"
+        "run: python tools/sync.py"
+
+
+@pytest.mark.parametrize("src,copy", [("README.md", "README.md"), ("docs/TESTING.md", "TESTING.md"),
+                                      ("docs/USAGE_FOR_AI.md", "USAGE_FOR_AI.md")])
+def test_bundled_guides_match_their_sources(src, copy):
+    """AI tools read the copies in sorter/context/; they must equal the documents people read."""
+    root = Path(__file__).parent.parent
+    assert (root / src).read_bytes() == (root / "sorter" / "context" / copy).read_bytes(), "run: python tools/sync.py"
+
+
+def test_the_ai_guide_names_every_top_level_folder_and_every_tool():
+    """Keep the guide honest: it must mention each rule folder and each real MCP tool."""
+    root = Path(__file__).parent.parent
+    guide = (root / "docs" / "USAGE_FOR_AI.md").read_text(encoding="utf-8")
+    assert all(name in guide for name in RULES)
+    for tool in ("get_rules", "list_folder", "validate_manifest", "propose_plan", "list_context_files", "read_context_file"):
+        assert tool in guide
+    for names in RULES.values():
+        for second in names or []:
+            assert second in guide, second

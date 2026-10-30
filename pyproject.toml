@@ -19,7 +19,7 @@ onedrive-sorter = "sorter.__main__:main"
 packages = ["sorter"]
 
 [tool.setuptools.package-data]
-sorter = ["rules.json", "web/*.html"]
+sorter = ["rules.json", "web/*.html", "context/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

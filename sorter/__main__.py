@@ -29,9 +29,11 @@ def main(argv=None) -> int:
     sv.add_argument("--port", type=int, default=8765, help="0 picks a free port")
     sv.add_argument("--log-dir")
     sv.add_argument("--proposals-dir", help="where Claude's proposed plans are read from")
+    sv.add_argument("--config", help="settings file shared with the MCP server (default ~/.onedrive-sorter/config.json)")
     mc = sub.add_parser("mcp", help="MCP server over stdio for Claude Code / Claude Desktop (propose-only)")
     mc.add_argument("--root", required=True)
     mc.add_argument("--proposals-dir")
+    mc.add_argument("--config")
     u = sub.add_parser("undo")
     u.add_argument("log")
     u.add_argument("--root", required=True)
@@ -41,7 +43,7 @@ def main(argv=None) -> int:
     try:
         if a.cmd == "serve":
             from .server import serve
-            serve(a.root, a.port, a.log_dir, a.proposals_dir)
+            serve(a.root, a.port, a.log_dir, a.proposals_dir, a.config)
             return 0
         if a.cmd == "mcp":
             try:
@@ -49,7 +51,7 @@ def main(argv=None) -> int:
             except ModuleNotFoundError:
                 print("The MCP server needs the 'mcp' package: pip install \"mcp>=2,<3\"", file=sys.stderr)
                 return 2
-            run(a.root, a.proposals_dir)          # nothing may be printed to stdout here
+            run(a.root, a.proposals_dir, a.config)          # nothing may be printed to stdout here
             return 0
         if a.cmd == "undo":
             rep = engine.undo(a.log, a.root, delay=a.delay)

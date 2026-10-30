@@ -19,7 +19,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from . import __version__, engine, proposals
+from . import __version__, config, context, engine, proposals
 from .manifest import ManifestError, parse_manifest
 from .rules import REQUIRED_COLUMNS, RULES
 
@@ -74,7 +74,8 @@ class Job:
 
 
 class State:
-    def __init__(self, root, log_dir, token, proposals_dir=None):
+    def __init__(self, root, log_dir, token, proposals_dir=None, config_path=None):
+        self.config_path = config_path
         self.root = engine.open_root(root)
         self.proposals_dir = Path(proposals_dir) if proposals_dir else proposals.default_dir()
         self.log_dir = Path(log_dir) if log_dir else Path.home() / ".onedrive-sorter" / "logs"
@@ -94,6 +95,23 @@ class State:
         with self.lock:
             self.rows = parse_manifest(csv_text)
             return [row_json(r) for r in self.rows]
+
+    def context_state(self):
+        return context.state(config.load(self.config_path), self.root)
+
+    def set_context(self, data):
+        enabled, location, path = data.get("enabled"), data.get("location", "builtin"), data.get("path", "")
+        if not isinstance(enabled, bool) or location not in ("builtin", "custom") or not isinstance(path, str) or len(path) > 1024:
+            raise HttpError(400, "enabled must be true/false, location 'builtin' or 'custom', path text")
+        cfg = config.load(self.config_path)
+        cfg["context"] = {"enabled": enabled, "location": location, "path": path.strip()}
+        if enabled:
+            _, problem = context.resolve(cfg)
+            if problem:
+                raise HttpError(400, problem)                    # nothing is saved if the choice is unusable
+        with self.lock:
+            config.save(cfg, self.config_path)
+        return self.context_state()
 
     def load_proposal(self, name):
         try:
@@ -234,6 +252,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(200, st.job.snapshot() if st.job else {"status": "idle"})
                 if path == "/api/logs":
                     return self._json(200, {"logs": st.logs()})
+                if path == "/api/context":
+                    return self._json(200, st.context_state())
                 if path == "/api/proposals":
                     return self._json(200, {"proposals": proposals.list_all(st.proposals_dir)})
                 raise HttpError(404, "not found")
@@ -243,6 +263,8 @@ class Handler(BaseHTTPRequestHandler):
                 if not isinstance(text, str):
                     raise HttpError(400, "csv must be text")
                 return self._json(200, {"rows": st.load(text)})
+            if path == "/api/context":
+                return self._json(200, st.set_context(data))
             if path == "/api/proposal":
                 rows, note = st.load_proposal(data.get("name"))
                 return self._json(200, {"rows": rows, "note": note})
@@ -286,17 +308,17 @@ class Handler(BaseHTTPRequestHandler):
     do_OPTIONS = do_PUT = do_DELETE = do_PATCH = do_HEAD = _refuse
 
 
-def make_server(root, log_dir=None, host="127.0.0.1", port=0, token=None, proposals_dir=None):
+def make_server(root, log_dir=None, host="127.0.0.1", port=0, token=None, proposals_dir=None, config_path=None):
     if host not in LOOPBACK:
         raise ValueError("the backend only listens on a loopback address")
     httpd = ThreadingHTTPServer((host, port), Handler)
     httpd.daemon_threads = True
-    httpd.state = State(root, log_dir, token or secrets.token_urlsafe(32), proposals_dir)
+    httpd.state = State(root, log_dir, token or secrets.token_urlsafe(32), proposals_dir, config_path)
     return httpd
 
 
-def serve(root, port=8765, log_dir=None, proposals_dir=None):
-    httpd = make_server(root, log_dir, port=port, proposals_dir=proposals_dir)
+def serve(root, port=8765, log_dir=None, proposals_dir=None, config_path=None):
+    httpd = make_server(root, log_dir, port=port, proposals_dir=proposals_dir, config_path=config_path)
     url = f"http://127.0.0.1:{httpd.server_address[1]}/#token={httpd.state.token}"
     print(f"Sorting: {httpd.state.root}\nOpen this address in your browser (it contains this run's token):\n{url}\n"
           "Press Ctrl+C to stop.", flush=True)

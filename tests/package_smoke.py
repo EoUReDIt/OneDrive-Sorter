@@ -19,6 +19,9 @@ assert exe, "the onedrive-sorter command is not installed"
 
 assert json.loads(resources.files("sorter").joinpath("rules.json").read_text())["top_level"]["Career"]
 assert b"OneDrive Sorter" in resources.files("sorter").joinpath("web", "index.html").read_bytes()
+from sorter import context
+assert {"README.md", "TESTING.md", "USAGE_FOR_AI.md"} <= {f["name"] for f in context.list_files(context.builtin_dir())}, \
+    "the installed package is missing its bundled guides"
 import sorter
 assert "site-packages" in sorter.__file__ or "dist-packages" in sorter.__file__, sorter.__file__
 
@@ -57,5 +60,5 @@ async def tools():
             await session.initialize()
             return {t.name for t in (await session.list_tools()).tools}
 
-assert asyncio.run(asyncio.wait_for(tools(), 60)) == {"get_rules", "list_folder", "validate_manifest", "propose_plan"}
+assert asyncio.run(asyncio.wait_for(tools(), 60)) == {"get_rules", "list_folder", "validate_manifest", "propose_plan", "list_context_files", "read_context_file"}
 print("package smoke: OK")

@@ -14,7 +14,7 @@ from mcp import ClientSession, StdioServerParameters          # noqa: E402
 from mcp.client.stdio import stdio_client                      # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
-TOOLS = {"get_rules", "list_folder", "validate_manifest", "propose_plan"}
+TOOLS = {"get_rules", "list_folder", "validate_manifest", "propose_plan", "list_context_files", "read_context_file"}
 
 
 async def _list(params):

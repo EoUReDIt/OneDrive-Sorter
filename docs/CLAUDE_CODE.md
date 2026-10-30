@@ -51,7 +51,7 @@ Set it, then start `claude` from the project folder in that same terminal.
 ## Check that it works
 
 In a terminal: `claude mcp list` should show `onedrive-sorter` as connected. Inside Claude Code,
-`/mcp` opens the same status panel, with the number of tools (there should be four).
+`/mcp` opens the same status panel, with the number of tools (there should be six).
 
 If it shows `Failed to connect`, `claude mcp get onedrive-sorter` explains why. Common causes:
 
@@ -77,7 +77,7 @@ read the table, and **Execute** only if you are happy.
 
 ## Optional: stop being asked for the read-only tools
 
-The three read-only tools are safe to pre-approve. Put this in `.claude/settings.json` (or
+The five read-only tools are safe to pre-approve. Put this in `.claude/settings.json` (or
 `.claude/settings.local.json` to keep it to yourself):
 
 ```json
@@ -86,14 +86,16 @@ The three read-only tools are safe to pre-approve. Put this in `.claude/settings
     "allow": [
       "mcp__onedrive-sorter__get_rules",
       "mcp__onedrive-sorter__list_folder",
-      "mcp__onedrive-sorter__validate_manifest"
+      "mcp__onedrive-sorter__validate_manifest",
+      "mcp__onedrive-sorter__list_context_files",
+      "mcp__onedrive-sorter__read_context_file"
     ]
   }
 }
 ```
 
 Leave `mcp__onedrive-sorter__propose_plan` out so you are still asked before a plan is saved. Rule
-names have the form `mcp__<server>__<tool>`; `mcp__onedrive-sorter__*` would allow all four.
+names have the form `mcp__<server>__<tool>`; `mcp__onedrive-sorter__*` would allow all six.
 
 ## What this connection can and cannot do
 
