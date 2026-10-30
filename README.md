@@ -64,15 +64,43 @@ row to accept the exception.
 
 ## Setup
 
-### 1. Register an Azure app (once)
+### 1. Register an app with your personal Microsoft account (once, free)
 
-1. Go to the Azure portal, **Microsoft Entra ID > App registrations > New registration**.
-2. Supported account types: **Personal Microsoft accounts only**.
-3. Redirect URI: platform **Single-page application (SPA)** and the exact URL you will open the page
-   from (see step 2), including the trailing slash or file name.
-4. After creating it, copy the **Application (client) ID**.
-5. Under **API permissions**, add Microsoft Graph delegated permissions `Files.ReadWrite` and
-   `User.Read`.
+You do not need an Azure subscription, a credit card or a work/school (enterprise) account. The
+registration is a one-minute form. (Portal menus change over time; the names below may differ slightly.)
+
+1. Decide your redirect URI first, because you enter it during registration. It must exactly match the
+   URL you open the page from (see step 2), for example `https://<user>.github.io/OneDrive-Sorter/` or
+   `http://localhost:8080/`.
+2. Sign in at <https://entra.microsoft.com> (or <https://portal.azure.com>) with the **same personal
+   Microsoft account that owns the OneDrive** (outlook.com, hotmail.com, live.com, etc.). A personal
+   account normally gets a "Default Directory" tenant automatically. If you are told you have no
+   tenant or directory, see Troubleshooting below.
+3. Go to **App registrations** (Entra: *Entra ID > App registrations*) and choose **New registration**.
+4. Fill in the form:
+   - **Name:** anything, for example `OneDrive Sorter`.
+   - **Supported account types:** **Personal Microsoft accounts only**. (If that option is not shown,
+     choose "Accounts in any organizational directory and personal Microsoft accounts".)
+   - **Redirect URI:** platform **Single-page application (SPA)**, value from step 1. It must be the SPA
+     platform, not "Web" or "Public client", or sign-in fails with a PKCE/CORS error.
+5. Click **Register**. On the overview page, copy the **Application (client) ID**. You paste this into
+   the app. There is no client secret to create.
+6. Open **API permissions > Add a permission > Microsoft Graph > Delegated permissions** and add
+   `Files.ReadWrite` and `User.Read`. For a personal account you do not need (and cannot use) admin
+   consent; you approve the permissions yourself on first sign-in.
+7. Optional: under **Authentication**, add a second SPA redirect URI so the same registration works both
+   locally and on GitHub Pages.
+
+Troubleshooting:
+
+| Message | Fix |
+| --- | --- |
+| No tenant / "you don't have access to this directory" when opening App registrations | Sign up for a free Azure account with the same personal account at <https://azure.microsoft.com/free> (it may ask for phone or card verification, and you are not charged for the registration), then retry. |
+| `AADSB90015` / "Cross-origin token redemption is permitted only for the Single-Page Application client-type" | The redirect URI was added under the wrong platform. Remove it and add it again under **Single-page application**. |
+| `AADSTS50011` redirect URI mismatch | The page URL differs from the registered one (check `http` vs `https`, port, trailing slash, file name). |
+| `AADSTS700016` / "application not found in the directory" | Account types are not set to allow personal accounts. Change them in **Authentication > Supported account types**. |
+| `AADSTS65001` consent required | Sign in again and accept the permission prompt. |
+| Popup blocked | Allow popups for the page. |
 
 ### 2. Serve the page
 
