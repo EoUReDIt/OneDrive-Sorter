@@ -154,3 +154,38 @@ network error), it reports an error and does not move that item.
   root-level items by hand or edit the file first.
 - The earlier proof of concept let Claude (via Puter.js) invent a plan from free text and could
   delete. That was removed on purpose: plans now come from a manifest a human has verified.
+
+## Hosting on GitHub Pages (walkthrough)
+
+The app is a single static `index.html`, so GitHub Pages can host it with no build step. The live URL
+for this repository will be `https://eouredit.github.io/OneDrive-Sorter/` (owner name in lowercase).
+
+1. **Get `index.html` onto the branch Pages will publish.** Pages publishes from one branch. Merge the
+   work on `claude/youthful-maxwell-8ci1wg` into your default branch (usually `main`), for example
+   with a pull request. `index.html` must be at the repository root, where it is now.
+2. **Turn on Pages.** In the repository on GitHub, open **Settings > Pages**. Under **Build and
+   deployment**, set **Source** to **Deploy from a branch**, choose your default branch and the
+   **/ (root)** folder, then **Save**.
+3. **Wait for the first deployment.** It usually takes one to two minutes. The Pages settings screen
+   shows "Your site is live at ..." when it is ready, and the **Actions** tab shows the deployment run.
+4. **Register that exact URL as the redirect URI.** In your Azure app registration, open
+   **Authentication**, and under **Single-page application** add
+   `https://eouredit.github.io/OneDrive-Sorter/` (with the trailing slash). Keep
+   `http://localhost:8080/` as a second URI if you also want to test locally. Save.
+5. **Open the site, paste your client ID, and click Connect OneDrive.** Then follow "Use it" above.
+   If you see `AADSTS50011` (redirect URI mismatch), compare the address bar to the registered URI
+   character by character.
+6. **Updating later.** Push changes to the published branch; Pages redeploys on its own. Hard-refresh
+   the page (Ctrl+Shift+R) if you still see the old version.
+
+Things to know:
+
+- **Nothing private is hosted.** Pages serves only `index.html` and this README's repository files.
+  Your manifest is loaded from your own disk by the browser and never uploaded, and `*.csv` is in
+  `.gitignore` so it cannot be committed by accident. Your Azure client ID is not a secret.
+- **The site is public.** Anyone with the link can open the page, but they cannot do anything without
+  signing in to their own OneDrive. GitHub Pages sites are public on most plans even when the repository
+  is private, and Pages from a private repository may require a paid GitHub plan. Check
+  **Settings > Pages** for what your plan allows.
+- **Alternatives to Pages.** Any static host works the same way, as long as the redirect URI you
+  register matches the page URL. For local use, `python3 -m http.server 8080` is enough.
