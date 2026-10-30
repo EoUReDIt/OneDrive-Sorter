@@ -40,7 +40,7 @@ const assert = require('assert');
       return J(500, {});
     };
   });
-  await page.goto('file://' + path.resolve(__dirname, '..', 'index.html'));
+  await page.goto('file://' + path.resolve(__dirname, '..', 'sorter', 'web', 'index.html'));
   await page.fill('#client-id', 'test-client');
   await page.click('button:has-text("Connect OneDrive")');
   await page.setInputFiles('#manifest-file', path.resolve(__dirname, 'fixtures', 'sample_manifest.csv'));

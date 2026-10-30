@@ -59,7 +59,7 @@ silently break an earlier part.
 | 2 (done) | Local backend (HTTP on localhost, token, origin checks) and the page switched to call it | 23 API tests against a real server, including hostile-request tests; the page driven end to end in a browser against the real backend (move, then undo); the old cloud-mode page smoke test still passes |
 | 3 (done) | MCP server over stdio: read-only tools (rules, list a folder, validate a manifest) and a *propose plan* tool that stores a plan for you to review, never applies it; a "Proposals from Claude" picker in the page | 30 tests that run the real server with the real MCP client: exact tool list, no tool that can move anything, the sorted folder is byte-for-byte unchanged after every tool is called, path escapes refused with a readable reason, hostile file names neutralised; backend and browser tests for loading a proposal |
 | 4 (done) | Connecting Claude Code: a project `.mcp.json`, a `/mcp__onedrive-sorter__sort_folder` prompt served by the MCP server, and a walkthrough ([CLAUDE_CODE.md](CLAUDE_CODE.md)) of the approval prompts, troubleshooting and the optional read-only allow-list | The project config is used to start the real server and list its tools and prompt; every tool named in the docs must exist; the settings example must be valid and allow only read-only tools |
-| 5 | Final refactor: one shared rules file, remove duplicated logic in the page, decide whether to keep the old direct-to-Microsoft mode, rewrite the README | Full suite plus an end-to-end test (propose, review, apply, undo) |
+| 5 (done) | Final refactor: rules moved into `sorter/rules.json` (change a folder name without touching code), the page moved inside the package so installs can find it, an `onedrive-sorter` command, README rewritten, the cloud (Microsoft sign-in) mode kept as an alternative | Whole-chain test (Claude proposes through MCP, a human loads, checks, executes and undoes through the API, folder verified at every step); clean install of the built wheel on Linux, Windows and macOS; root page must equal the packaged page |
 
 ## Running the local backend (stage 2)
 
@@ -116,8 +116,13 @@ Claude wants to use one of the tools, unless you allow-list the read-only ones.
 
 ## Decisions and open questions
 
-- Language: Python (standard library only) for the engine, so it runs on Windows, macOS and Linux.
-  The MCP stage will add one dependency (the official MCP SDK).
+- Language: Python (standard library only) for the engine and backend, so it runs on Windows, macOS and
+  Linux. The MCP server adds one dependency (the official MCP SDK, `mcp>=2,<3`).
+- The cloud mode (browser signs in to Microsoft and moves files through the Graph API) is kept for people
+  who cannot or do not want to run anything locally. It needs an Azure app registration and has no Claude
+  integration. The page keeps a copy of the rules for it; a test fails if the copy drifts.
+- The page exists twice: `sorter/web/index.html` (served by the backend, packaged) and `index.html` at the
+  root (served by GitHub Pages). Edit the first, run `python tools/sync_page.py`; a test enforces it.
 - Linux has no official OneDrive sync client; the community client or an rclone mount would be needed.
 - Files that are "online only" (not downloaded) can be moved without downloading them. Reading their
   contents would download them, so the plan is to classify from names and metadata only.

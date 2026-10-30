@@ -1,22 +1,13 @@
-"""Rules v37 (CURRENT_RULES_v37_Consolidated.pdf) and per-row validation.
+"""Rules v37 (CURRENT_RULES_v37_Consolidated.pdf) and per-row validation."""
+import json
+from importlib import resources
 
-index.html carries a copy of RULES; tests/test_rules.py fails if the two drift apart.
-"""
-
-# Top-level folders; the value lists the allowed second-level folders where the rules define them.
-RULES = {
-    "Academic": ["University Coursework", "Professional Training", "Self-Paced Learning",
-                 "Self-Directed Practice", "Academic Support Material"],
-    "Career": ["Resume Workspace", "Applications", "Interviews", "Employers", "Security Clearance"],
-    "Self-Paced Learning": None,
-    "Professional Training": ["Revature PET", "Assessments", "Coding Labs", "Projects", "Feedback"],
-    "Administrative": None,
-    "Staging-Probable": None,
-    "Unsorted": None,
-}
-
-REQUIRED_COLUMNS = ["SourceFile", "DestinationFolder", "Category", "SubCategory",
-                    "Confidence", "Status", "MoveAction", "Notes"]
+# The rules live in rules.json (next to this file) so they can be changed without touching code.
+# "top_level" maps each top-level folder to its allowed second-level folders, or null when any
+# subfolder is allowed. The browser page keeps a copy for cloud mode; a test fails if they differ.
+_DATA = json.loads(resources.files(__package__).joinpath("rules.json").read_text(encoding="utf-8"))
+RULES = _DATA["top_level"]
+REQUIRED_COLUMNS = _DATA["columns"]
 
 
 def split_path(path: str) -> list[str]:

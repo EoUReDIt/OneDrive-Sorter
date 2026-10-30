@@ -14,6 +14,7 @@ import re
 import secrets
 import threading
 import traceback
+from importlib import resources
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -23,7 +24,7 @@ from .manifest import ManifestError, parse_manifest
 from .rules import REQUIRED_COLUMNS, RULES
 
 MAX_BODY = 5 * 1024 * 1024
-PAGE = Path(__file__).resolve().parent.parent / "index.html"
+PAGE = resources.files(__package__).joinpath("web", "index.html")
 LOG_NAME = re.compile(r"^moves_[0-9_]+\.jsonl$")
 LOOPBACK = ("127.0.0.1", "localhost")
 

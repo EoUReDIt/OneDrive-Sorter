@@ -47,9 +47,16 @@ def test_empty_fields_flagged():
 
 
 def test_browser_copy_of_rules_matches_python():
-    """index.html duplicates the rules until the final refactor; fail loudly if they drift."""
-    html = (Path(__file__).parent.parent / "index.html").read_text(encoding="utf-8")
+    """The page keeps a copy of the rules for cloud mode (it has no backend to ask); fail loudly if it drifts."""
+    html = (Path(__file__).parent.parent / "sorter" / "web" / "index.html").read_text(encoding="utf-8")
     js_rules = json.loads(re.search(r"const RULES = (\{.*?\n\});", html, re.S).group(1))
     assert js_rules == RULES
     js_cols = json.loads(re.search(r"const REQUIRED_COLUMNS = (\[.*?\]);", html, re.S).group(1))
     assert js_cols == REQUIRED_COLUMNS
+
+
+def test_root_page_matches_the_packaged_page():
+    """GitHub Pages serves the root index.html; the package serves sorter/web/index.html."""
+    root = Path(__file__).parent.parent
+    assert (root / "index.html").read_bytes() == (root / "sorter" / "web" / "index.html").read_bytes(), \
+        "run: python tools/sync_page.py"

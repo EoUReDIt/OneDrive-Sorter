@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OneDrive Sorter</title>
+  <style>
+    body { font-family: sans-serif; max-width: 1000px; margin: 40px auto; padding: 0 20px; line-height: 1.5; }
+    .card { border: 1px solid #ccc; padding: 16px; border-radius: 8px; margin-bottom: 20px; }
+    button { padding: 8px 16px; cursor: pointer; }
+    .controls { display: flex; gap: 10px; align-items: center; margin-top: 10px; flex-wrap: wrap; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { border-bottom: 1px solid #ddd; padding: 4px 6px; text-align: left; vertical-align: top; }
+    .ok { color: #1a7f37; } .warn { color: #9a6700; } .bad { color: #cf222e; }
+    #log { background: #f4f4f4; padding: 10px; height: 180px; overflow-y: scroll; font-family: monospace; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <h1>OneDrive Sorter</h1>
+  <p>Governing principle: <em>Recovery First, Verification Second, Organization Third, Automation Last.</em>
+     Moves only. Nothing is ever deleted, overwritten or renamed.</p>
+
+  <div class="card" id="card-local" style="display:none">
+    <h3>1. Local folder</h3>
+    <p>Sorting <code id="local-root"></code> on this computer. OneDrive's sync app carries the changes to the cloud.
+       Nothing here talks to Microsoft.</p>
+  </div>
+
+  <div class="card" id="card-cloud">
+    <h3>1. Connect OneDrive</h3>
+    <div class="controls">
+      <label>Azure client ID (SPA): <input id="client-id" size="40"></label>
+      <button onclick="loginOneDrive()">Connect OneDrive</button>
+      <span id="msal-status">Not connected</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>2. Load manifest</h3>
+    <input type="file" id="manifest-file" accept=".csv" onchange="loadManifest(this.files[0])">
+    <div id="proposals-box" style="display:none; margin: 8px 0;">
+      <strong>Proposals from Claude:</strong>
+      <select id="proposal-select"></select>
+      <button onclick="loadProposal()">Load proposal</button>
+      <button onclick="refreshProposals()">Refresh</button>
+      <div id="proposal-note"></div>
+    </div>
+    <p id="manifest-summary"></p>
+    <table id="plan"><thead></thead><tbody></tbody></table>
+  </div>
+
+  <div class="card">
+    <h3>3. Check, then execute</h3>
+    <div class="controls">
+      <label for="rate-slider">Pacing delay: <span id="rate-display">1500</span>ms</label>
+      <input type="range" id="rate-slider" min="500" max="5000" step="250" value="1500" oninput="updateRate(this.value)">
+    </div>
+    <div class="controls">
+      <button onclick="runCheck()" id="btn-check" disabled>Check (dry run, read-only)</button>
+      <button onclick="runExecute()" id="btn-run" disabled>Execute checked rows</button>
+      <button onclick="togglePause()" id="btn-pause" disabled>Pause</button>
+      <button onclick="downloadUndo()" id="btn-undo" disabled>Download undo record</button>
+    </div>
+    <div class="controls">
+      <button onclick="exportRclone()" id="btn-rclone" disabled>Export rclone script</button>
+      <span>No sign-in or app registration needed; runs on your computer with rclone.</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>4. Action log</h3>
+    <div id="log"></div>
+  </div>
+
+<script>
+// ---------- Rules v37 (Consolidated) ----------
+// Top-level folders, and the allowed second-level folders where the rules define them.
+const RULES = {
+  "Academic": ["University Coursework", "Professional Training", "Self-Paced Learning", "Self-Directed Practice", "Academic Support Material"],
+  "Career": ["Resume Workspace", "Applications", "Interviews", "Employers", "Security Clearance"],
+  "Self-Paced Learning": null,
+  "Professional Training": ["Revature PET", "Assessments", "Coding Labs", "Projects", "Feedback"],
+  "Administrative": null,
+  "Staging-Probable": null,
+  "Unsorted": null
+};
+const REQUIRED_COLUMNS = ["SourceFile", "DestinationFolder", "Category", "SubCategory", "Confidence", "Status", "MoveAction", "Notes"];
+
+// ---------- State ----------
+let msalInstance = null, account = null;
+let delayMs = 1500, rows = [], isPaused = false, running = false, cursor = 0, undoRecords = [];
+
+function log(msg) {
+  const el = document.getElementById('log');
+  const d = document.createElement('div');
+  d.textContent = msg;
+  el.appendChild(d);
+  el.scrollTop = el.scrollHeight;
+}
+function updateRate(v) { delayMs = parseInt(v); document.getElementById('rate-display').textContent = v; }
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const enc = path => path.split('/').filter(Boolean).map(encodeURIComponent).join('/');
+
+// ---------- Auth ----------
+const MSAL_URL = 'https://alcdn.msauth.net/browser/2.35.0/js/msal-browser.min.js';
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    if (window.msal) return resolve();
+    const el = document.createElement('script');
+    el.src = src; el.onload = resolve; el.onerror = () => reject(new Error('could not load ' + src));
+    document.head.appendChild(el);
+  });
+}
+try { document.getElementById('client-id').value = localStorage.getItem('clientId') || ''; } catch (e) {}
+async function loginOneDrive() {
+  const clientId = document.getElementById('client-id').value.trim();
+  if (!clientId) return alert('Enter your Azure client ID first.');
+  try { localStorage.setItem('clientId', clientId); } catch (e) {}
+  try {
+    await loadScript(MSAL_URL);          // only cloud mode needs Microsoft's script
+    msalInstance = new msal.PublicClientApplication({
+      auth: { clientId, authority: 'https://login.microsoftonline.com/consumers', redirectUri: location.origin + location.pathname }
+    });
+    await msalInstance.initialize();
+    const r = await msalInstance.loginPopup({ scopes: ['Files.ReadWrite', 'User.Read'] });
+    account = r.account;
+    document.getElementById('msal-status').textContent = 'Connected as ' + account.username;
+    refreshButtons();
+  } catch (err) { log('OneDrive auth failed: ' + err.message); }
+}
+async function getToken() {
+  const scopes = ['Files.ReadWrite', 'User.Read'];
+  try { return (await msalInstance.acquireTokenSilent({ scopes, account })).accessToken; }
+  catch (e) { return (await msalInstance.acquireTokenPopup({ scopes, account })).accessToken; }
+}
+
+// ---------- Graph helper (retries on throttling) ----------
+async function graph(method, path, body) {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const res = await fetch('https://graph.microsoft.com/v1.0' + path, {
+      method,
+      headers: { Authorization: 'Bearer ' + await getToken(), ...(body ? { 'Content-Type': 'application/json' } : {}) },
+      body: body ? JSON.stringify(body) : undefined
+    });
+    if (res.status === 429 || res.status === 503) {
+      const wait = (parseInt(res.headers.get('Retry-After')) || 5) * 1000;
+      log(`Throttled (${res.status}); waiting ${wait}ms`);
+      await sleep(wait);
+      continue;
+    }
+    return res;
+  }
+  throw new Error('Gave up after repeated throttling');
+}
+
+// ---------- CSV ----------
+function parseCSV(text) {
+  text = text.replace(/^﻿/, '');
+  const out = []; let row = [], f = '', q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) {
+      if (c === '"') { if (text[i + 1] === '"') { f += '"'; i++; } else q = false; }
+      else f += c;
+    } else if (c === '"') q = true;
+    else if (c === ',') { row.push(f); f = ''; }
+    else if (c === '\n' || c === '\r') {
+      if (c === '\r' && text[i + 1] === '\n') i++;
+      row.push(f); f = ''; out.push(row); row = [];
+    } else f += c;
+  }
+  if (f || row.length) { row.push(f); out.push(row); }
+  return out.filter(r => r.some(x => x.trim() !== ''));
+}
+const csvCell = v => /[",\n\r]/.test(v) ? '"' + String(v).replace(/"/g, '""') + '"' : String(v);
+
+// ---------- Validation against Rules v37 ----------
+function validate(r) {
+  const problems = [];
+  if (r.MoveAction.toUpperCase() !== 'MOVE') problems.push(`MoveAction "${r.MoveAction}" is not MOVE`);
+  if (r.Status !== 'Verified') problems.push(`Status is "${r.Status}", not Verified`);
+  if (!r.SourceFile) problems.push('SourceFile is empty');
+  const segs = r.DestinationFolder.split('/').filter(Boolean);
+  if (!segs.length) problems.push('DestinationFolder is empty');
+  else if (!(segs[0] in RULES)) problems.push(`"${segs[0]}" is not a top-level folder in the rules`);
+  else if (RULES[segs[0]] && segs[1] && !RULES[segs[0]].includes(segs[1]))
+    problems.push(`"${segs[1]}" is not defined under ${segs[0]} in the rules`);
+  if (segs.some(s => s === '..' || s === '.')) problems.push('DestinationFolder contains . or ..');
+  if (r.SourceFile.split('/').some(s => s === '..')) problems.push('SourceFile contains ..');
+  return problems;
+}
+
+function loadManifest(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    if (local) return loadManifestLocal(reader.result);
+    const table = parseCSV(reader.result);
+    const header = table.shift().map(h => h.trim());
+    const missing = REQUIRED_COLUMNS.filter(c => !header.includes(c));
+    if (missing.length) { log('Manifest is missing columns: ' + missing.join(', ')); return; }
+    rows = table.map((cells, i) => {
+      const r = {}; header.forEach((h, j) => r[h] = (cells[j] || '').trim());
+      r.problems = validate(r);
+      r.destFolder = r.DestinationFolder.split('/').filter(Boolean).join('/');
+      r.selected = r.problems.length === 0;
+      r.state = r.problems.length ? 'needs review' : 'not checked';
+      r.cls = r.problems.length ? 'warn' : '';
+      r.detail = r.problems.join('; ');
+      r.n = i + 1;
+      return r;
+    });
+    undoRecords = []; cursor = 0;
+    log(`Loaded ${rows.length} manifest row(s); ${rows.filter(r => r.problems.length).length} need review.`);
+    render(); refreshButtons();
+  };
+  reader.readAsText(file);
+}
+
+function render() {
+  const thead = document.querySelector('#plan thead'), tbody = document.querySelector('#plan tbody');
+  thead.innerHTML = '<tr><th>Run</th><th>#</th><th>Source</th><th>Destination</th><th>Conf.</th><th>State</th><th>Detail</th></tr>';
+  tbody.textContent = '';
+  rows.forEach(r => {
+    const tr = document.createElement('tr');
+    const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = r.selected;
+    cb.onchange = () => { r.selected = cb.checked; };
+    const cells = [null, r.n, r.SourceFile, r.destFolder, r.Confidence, r.state, r.detail];
+    cells.forEach((v, i) => {
+      const td = document.createElement('td');
+      if (i === 0) td.appendChild(cb); else td.textContent = v;
+      if (i === 5) td.className = r.cls;
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+  document.getElementById('manifest-summary').textContent =
+    rows.length ? `${rows.length} rows. Rows that fail the rules are unchecked; tick one only if you accept the exception.` : '';
+}
+function set(r, state, cls, detail) { r.state = state; r.cls = cls; r.detail = detail || ''; render(); }
+function refreshButtons() {
+  document.getElementById('btn-check').disabled = !((account || local) && rows.length) || running;
+  document.getElementById('btn-run').disabled = !rows.some(r => r.state === 'ready') || running;
+  document.getElementById('btn-undo').disabled = local ? (!lastLog || running) : !undoRecords.length;
+  document.getElementById('btn-rclone').disabled = !rows.length;
+}
+
+// ---------- Check (read-only dry run) ----------
+async function lookup(path) {
+  const res = await graph('GET', `/me/drive/root:/${enc(path)}`);
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`GET ${path} -> ${res.status}`);
+  return res.json();
+}
+async function runCheck() {
+  if (local) return runCheckLocal();
+  running = true; refreshButtons();
+  log('Check started (read-only).');
+  const toCreate = new Set();
+  for (const r of rows) {
+    if (!r.selected) continue;
+    try {
+      const item = await lookup(r.SourceFile);
+      if (!item) { set(r, 'source not found', 'bad', 'No item with that name/path in OneDrive'); r.item = null; }
+      else {
+        r.item = item;
+        const parent = (item.parentReference.path || '').replace(/^\/drive\/root:?\/?/, '');
+        const destParent = await lookup(r.destFolder);
+        if (parent === r.destFolder) set(r, 'already there', 'ok', 'Skipped');
+        else if (await lookup(r.destFolder + '/' + item.name)) set(r, 'name conflict', 'bad', 'Destination already has an item with this name; will not overwrite');
+        else {
+          if (!destParent) toCreate.add(r.destFolder);
+          set(r, 'ready', 'ok', destParent ? 'Destination exists' : 'Destination folder will be created');
+        }
+        r.origParent = parent;
+      }
+    } catch (err) { set(r, 'check failed', 'bad', err.message); }
+    await sleep(Math.min(delayMs, 500));
+  }
+  running = false; refreshButtons();
+  log('Check finished. Only rows marked "ready" will be executed.');
+  if (toCreate.size) log(`Folders that will be created (missing segments only): ${[...toCreate].join(' | ')}`);
+}
+
+// ---------- Execute ----------
+const folderCache = {};
+async function ensureFolder(path) {
+  const segs = path.split('/').filter(Boolean); let cur = '', parentId = null;
+  for (const s of segs) {
+    cur = cur ? cur + '/' + s : s;
+    if (folderCache[cur]) { parentId = folderCache[cur]; continue; }
+    let f = await lookup(cur);
+    if (!f) {
+      const res = await graph('POST', parentId ? `/me/drive/items/${parentId}/children` : '/me/drive/root/children',
+        { name: s, folder: {}, '@microsoft.graph.conflictBehavior': 'fail' });
+      if (!res.ok) throw new Error(`Create folder ${cur} -> ${res.status}`);
+      f = await res.json(); log('Created folder ' + cur);
+    } else if (!f.folder) throw new Error(`"${cur}" exists but is not a folder`);
+    folderCache[cur] = parentId = f.id;
+  }
+  return parentId;
+}
+async function runExecute() {
+  if (local) return runExecuteLocal();
+  const todo = rows.filter(r => r.selected && r.state === 'ready');
+  if (!todo.length || !confirm(`Move ${todo.length} item(s)? Nothing will be deleted or overwritten.`)) return;
+  running = true; isPaused = false; cursor = 0; refreshButtons();
+  document.getElementById('btn-pause').disabled = false;
+  await loop();
+}
+async function loop() {
+  const todo = rows.filter(r => r.selected && r.state === 'ready');
+  while (cursor < todo.length) {
+    if (isPaused) { log('Paused.'); return; }
+    const r = todo[cursor++];
+    try {
+      const destId = await ensureFolder(r.destFolder);
+      const res = await graph('PATCH', `/me/drive/items/${r.item.id}`,
+        { parentReference: { id: destId }, '@microsoft.graph.conflictBehavior': 'fail' });
+      if (!res.ok) throw new Error(`${res.status} ${(await res.text()).slice(0, 120)}`);
+      undoRecords.push({ id: r.item.id, name: r.item.name, from: r.origParent, to: r.destFolder });
+      set(r, 'moved', 'ok', '');
+      log(`Moved "${r.item.name}" -> ${r.destFolder}`);
+    } catch (err) { set(r, 'failed', 'bad', err.message); log(`FAILED "${r.SourceFile}": ${err.message}`); }
+    refreshButtons();
+    await sleep(delayMs);
+  }
+  running = false; document.getElementById('btn-pause').disabled = true;
+  const failed = rows.filter(r => r.state === 'failed');
+  log(`Done. Moved ${undoRecords.length}; failed ${failed.length}.`);
+  failed.forEach(r => log(`  FAILED #${r.n} ${r.SourceFile}: ${r.detail}`));
+  refreshButtons();
+}
+function togglePause() {
+  if (local) return togglePauseLocal();
+  isPaused = !isPaused;
+  document.getElementById('btn-pause').textContent = isPaused ? 'Resume' : 'Pause';
+  if (!isPaused && running) loop();
+}
+
+// ---------- Local mode (page served by `python -m sorter serve`) ----------
+let local = null, localToken = '', lastLog = '';
+async function api(method, path, body) {
+  const res = await fetch(path, {
+    method,
+    headers: { Authorization: 'Bearer ' + localToken, ...(body ? { 'Content-Type': 'application/json' } : {}) },
+    body: body ? JSON.stringify(body) : undefined
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+  return data;
+}
+async function detectLocal() {
+  if (location.protocol !== 'http:') return;
+  const m = location.hash.match(/token=([^&]+)/);
+  try {
+    if (m) sessionStorage.setItem('sorterToken', decodeURIComponent(m[1]));
+    localToken = sessionStorage.getItem('sorterToken') || '';
+  } catch (e) { localToken = m ? decodeURIComponent(m[1]) : ''; }
+  if (!localToken) return;
+  try { local = await api('GET', 'api/info'); } catch (e) { local = null; return; }
+  history.replaceState(null, '', location.pathname);        // keep the token out of the address bar
+  document.getElementById('card-cloud').style.display = 'none';
+  document.getElementById('card-local').style.display = '';
+  document.getElementById('local-root').textContent = local.root;
+  const slider = document.getElementById('rate-slider');
+  slider.min = 0; slider.max = 2000; slider.step = 50; slider.value = 250; updateRate(250);
+  document.getElementById('btn-undo').textContent = 'Undo last run';
+  document.getElementById('proposals-box').style.display = '';
+  refreshProposals();
+  log('Local mode: ' + local.root);
+  refreshButtons();
+}
+function setLocalRows(serverRows) {
+    rows = serverRows.map(r => ({
+      n: r.n, SourceFile: r.fields.SourceFile, DestinationFolder: r.fields.DestinationFolder,
+      destFolder: r.dest_folder, Confidence: r.fields.Confidence, selected: r.selected, problems: r.problems,
+      state: r.problems.length ? 'needs review' : 'not checked', cls: r.problems.length ? 'warn' : '',
+      detail: r.problems.join('; ')
+    }));
+    lastLog = '';
+    log(`Loaded ${rows.length} manifest row(s); ${rows.filter(r => r.problems.length).length} need review.`);
+    render(); refreshButtons();
+}
+function loadManifestLocal(text) {
+  api('POST', 'api/manifest', { csv: text }).then(data => setLocalRows(data.rows))
+    .catch(e => log('Manifest rejected: ' + e.message));
+}
+async function refreshProposals() {
+  try {
+    const data = await api('GET', 'api/proposals');
+    const sel = document.getElementById('proposal-select');
+    sel.textContent = '';
+    data.proposals.forEach(p => {
+      const o = document.createElement('option');
+      o.value = p.name;                                           // all of this text is untrusted: text only
+      o.textContent = `${p.created || p.name} (${Object.values(p.summary || {}).reduce((a, b) => a + b, 0)} rows)`;
+      sel.appendChild(o);
+    });
+    if (!data.proposals.length) { const o = document.createElement('option'); o.textContent = 'none yet'; o.disabled = true; sel.appendChild(o); }
+  } catch (e) { log('Could not list proposals: ' + e.message); }
+}
+async function loadProposal() {
+  const name = document.getElementById('proposal-select').value;
+  if (!name) return;
+  try {
+    const data = await api('POST', 'api/proposal', { name });
+    document.getElementById('proposal-note').textContent = data.note ? 'Claude\'s note: ' + data.note : '';
+    setLocalRows(data.rows);
+  } catch (e) { log('Could not load proposal: ' + e.message); }
+}
+async function runCheckLocal() {
+  running = true; refreshButtons(); log('Check started (read-only).');
+  try {
+    const data = await api('POST', 'api/check', { selected: rows.filter(r => r.selected).map(r => r.n) });
+    const by = new Map(data.items.map(i => [i.n, i]));
+    rows.forEach(r => {
+      const i = by.get(r.n); if (!i) return;
+      r.state = i.state; r.detail = i.detail;
+      r.cls = (i.state === 'ready' || i.state === 'already there') ? 'ok' : (i.state === 'not selected' ? 'warn' : 'bad');
+    });
+    render();
+    log('Check finished. Only rows marked "ready" will be executed.');
+    const make = [...new Set(data.items.filter(i => i.state === 'ready' && /will be created/.test(i.detail)).map(i => i.dest_folder))];
+    if (make.length) log(`Folders that will be created (missing segments only): ${make.join(' | ')}`);
+  } catch (e) { log('Check failed: ' + e.message); }
+  running = false; refreshButtons();
+}
+async function runExecuteLocal() {
+  const ready = rows.filter(r => r.selected && r.state === 'ready');
+  if (!ready.length || !confirm(`Move ${ready.length} item(s)? Nothing will be deleted or overwritten.`)) return;
+  running = true; isPaused = false; refreshButtons();
+  const pause = document.getElementById('btn-pause'); pause.disabled = false; pause.textContent = 'Pause';
+  try {
+    await api('POST', 'api/execute', { selected: ready.map(r => r.n), delay: delayMs / 1000 });
+    pollJob();
+  } catch (e) { log('Execute failed: ' + e.message); running = false; refreshButtons(); }
+}
+async function pollJob() {
+  const applied = new Set();
+  for (;;) {
+    let job;
+    try { job = await api('GET', 'api/job'); } catch (e) { log('Lost the backend: ' + e.message); break; }
+    job.events.forEach(ev => {
+      if (applied.has(ev.n)) return; applied.add(ev.n);
+      const r = rows.find(x => x.n === ev.n);
+      if (r) { r.state = ev.state; r.detail = ev.detail; r.cls = ev.state === 'moved' ? 'ok' : 'bad'; }
+      log(ev.state === 'moved' ? `Moved "${ev.source}"` : `FAILED "${ev.source}": ${ev.detail}`);
+    });
+    render();
+    if (job.status !== 'running' && job.status !== 'paused') {
+      lastLog = job.log;
+      if (job.error) log('Run error: ' + job.error);
+      log(`Done. Moved ${job.moved}; failed ${job.failed}.` + (job.status === 'stopped' ? ' (stopped early)' : ''));
+      break;
+    }
+    await sleep(300);
+  }
+  running = false; document.getElementById('btn-pause').disabled = true; refreshButtons();
+}
+async function togglePauseLocal() {
+  const want = !isPaused;
+  try {
+    await api('POST', want ? 'api/job/pause' : 'api/job/resume', {});
+    isPaused = want;
+    document.getElementById('btn-pause').textContent = isPaused ? 'Resume' : 'Pause';
+  } catch (e) { log('Pause/resume failed: ' + e.message); }
+}
+async function undoLocal() {
+  if (!lastLog || !confirm('Move everything from the last run back to where it was?')) return;
+  try {
+    const res = await api('POST', 'api/undo', { log: lastLog, delay: delayMs / 1000 });
+    log(`Undone ${res.moved}; failed ${res.failed.length}.`);
+    res.failed.forEach(f => log(`  FAILED ${f.source}: ${f.detail}`));
+    rows.forEach(r => { if (r.state === 'moved') { r.state = 'undone'; r.cls = 'warn'; r.detail = 'moved back'; } });
+    lastLog = ''; render();
+  } catch (e) { log('Undo failed: ' + e.message); }
+  refreshButtons();
+}
+window.addEventListener('hashchange', detectLocal);   // a fresh link pasted into an open tab
+detectLocal();
+
+// ---------- rclone export (no app registration needed) ----------
+const shq = v => "'" + String(v).replace(/'/g, "'\\''") + "'";
+function exportRclone() {
+  const skip = ['source not found', 'name conflict', 'already there', 'check failed', 'moved'];
+  const sel = rows.filter(r => r.selected && !skip.includes(r.state));
+  const usable = sel.filter(r => !/[\x00-\x1f]/.test(r.SourceFile + r.destFolder));
+  if (!usable.length) return alert('No selected rows to export.');
+  const sec = (delayMs / 1000).toFixed(2);
+  const out = [
+    '#!/usr/bin/env bash',
+    '# Generated by OneDrive Sorter. Moves only: never deletes or overwrites.',
+    '# Usage:  bash onedrive_sorter_rclone.sh [remote-name]        (dry run, the default)',
+    '#         DRY=0 bash onedrive_sorter_rclone.sh [remote-name]  (really move)',
+    '# [remote-name] is your rclone OneDrive remote (default: onedrive). See the README.',
+    '# Undo: each move is appended to the .tsv log as "<new path><TAB><old path>". To reverse:',
+    '#   while IFS=$\'\\t\' read -r d s; do rclone moveto "$REMOTE:$d" "$REMOTE:$s"; done < undo_log.tsv',
+    'set -u',
+    'REMOTE="${1:-onedrive}"',
+    'DRY="${DRY:-1}"',
+    'LOG="undo_log_$(date +%Y%m%d_%H%M%S).tsv"',
+    'FAILS=0',
+    '# exists <path>: 0 = exists, 1 = definitely missing, 2 = could not tell (never treated as missing)',
+    'exists() { rclone lsjson --stat "$REMOTE:$1" >/dev/null 2>&1; case $? in 0) return 0;; 3|4) return 1;; *) return 2;; esac; }',
+    'move() { # src destfolder name',
+    '  local src="$1" folder="$2" dst="$2/$3"',
+    '  exists "$src"; case $? in 1) echo "SKIP not found: $src"; return;; 2) echo "ERROR cannot read: $src"; FAILS=$((FAILS+1)); return;; esac',
+    '  exists "$dst"; case $? in 0) echo "SKIP name conflict: $dst"; return;; 2) echo "ERROR cannot read: $dst"; FAILS=$((FAILS+1)); return;; esac',
+    '  if [ "$DRY" != 0 ]; then echo "DRY: $src -> $dst"; return; fi',
+    '  rclone mkdir "$REMOTE:$folder" && rclone moveto "$REMOTE:$src" "$REMOTE:$dst" \\',
+    '    && { echo "MOVED: $src -> $dst"; printf \'%s\\t%s\\n\' "$dst" "$src" >> "$LOG"; } \\',
+    '    || { echo "FAILED: $src"; FAILS=$((FAILS+1)); }',
+    `  sleep ${sec}`,
+    '}',
+    ''
+  ];
+  usable.forEach(r => {
+    const name = r.SourceFile.split('/').filter(Boolean).pop();
+    out.push(`move ${shq(r.SourceFile.split('/').filter(Boolean).join('/'))} ${shq(r.destFolder)} ${shq(name)}`);
+  });
+  out.push('', 'echo "Done. Failures: $FAILS"');
+  if (sel.length !== usable.length) log(`rclone export: ${sel.length - usable.length} row(s) skipped (control characters in names).`);
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([out.join('\n') + '\n'], { type: 'text/x-shellscript' }));
+  a.download = 'onedrive_sorter_rclone.sh';
+  a.click();
+  log(`Exported ${usable.length} move(s) to onedrive_sorter_rclone.sh (dry run by default).`);
+}
+
+// ---------- Undo record (same schema as the manifest, new location -> original folder) ----------
+function downloadUndo() {
+  if (local) return undoLocal();
+  const lines = [REQUIRED_COLUMNS.join(',')];
+  undoRecords.forEach(u => lines.push([u.to + '/' + u.name, u.from, 'Undo', '', 100, 'Verified', 'MOVE', 'Reverses a move; empty DestinationFolder = OneDrive root'].map(csvCell).join(',')));
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([lines.join('\n')], { type: 'text/csv' }));
+  a.download = 'undo_manifest_' + new Date().toISOString().slice(0, 19).replace(/:/g, '') + '.csv';
+  a.click();
+}
+</script>
+</body>
+</html>

@@ -48,3 +48,26 @@ jobs:
       - run: npm install --no-save playwright@1.49.0
       - run: npx playwright install --with-deps chromium
       - run: node tests/gui_local.js
+
+  package:
+    name: clean install (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: python -m pip install build
+      - run: python -m build --wheel -o wheelhouse
+      - name: install the wheel into a clean environment and exercise it from outside the repository
+        shell: bash
+        run: |
+          python -m venv "$RUNNER_TEMP/venv"
+          if [ -d "$RUNNER_TEMP/venv/Scripts" ]; then BIN="$RUNNER_TEMP/venv/Scripts"; else BIN="$RUNNER_TEMP/venv/bin"; fi
+          "$BIN/python" -m pip install "$(ls wheelhouse/*.whl)[mcp]"
+          cd "$RUNNER_TEMP"
+          "$BIN/python" "$GITHUB_WORKSPACE/tests/package_smoke.py" "$GITHUB_WORKSPACE/tests/fixtures/sample_manifest.csv"

@@ -12,8 +12,14 @@ dependencies = []
 [project.optional-dependencies]
 mcp = ["mcp>=2,<3"]
 
+[project.scripts]
+onedrive-sorter = "sorter.__main__:main"
+
 [tool.setuptools]
 packages = ["sorter"]
+
+[tool.setuptools.package-data]
+sorter = ["rules.json", "web/*.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

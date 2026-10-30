@@ -1,0 +1,39 @@
+{
+  "top_level": {
+    "Academic": [
+      "University Coursework",
+      "Professional Training",
+      "Self-Paced Learning",
+      "Self-Directed Practice",
+      "Academic Support Material"
+    ],
+    "Career": [
+      "Resume Workspace",
+      "Applications",
+      "Interviews",
+      "Employers",
+      "Security Clearance"
+    ],
+    "Self-Paced Learning": null,
+    "Professional Training": [
+      "Revature PET",
+      "Assessments",
+      "Coding Labs",
+      "Projects",
+      "Feedback"
+    ],
+    "Administrative": null,
+    "Staging-Probable": null,
+    "Unsorted": null
+  },
+  "columns": [
+    "SourceFile",
+    "DestinationFolder",
+    "Category",
+    "SubCategory",
+    "Confidence",
+    "Status",
+    "MoveAction",
+    "Notes"
+  ]
+}

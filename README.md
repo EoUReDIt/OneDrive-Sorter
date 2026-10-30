@@ -145,11 +145,12 @@ slider value at export time); and it appends every move to `undo_log_<timestamp>
 command in the script header to reverse them. If it cannot tell whether a path exists (for example a
 network error), it reports an error and does not move that item.
 
-## Local engine (work in progress)
+## Local mode (recommended)
 
-A second way to run the same manifests: sort the OneDrive folder on your own computer and let the
-OneDrive sync client carry the changes to the cloud. No Azure app registration is needed. See
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the staged plan and the concepts.
+Sort the OneDrive folder on your own computer and let the OneDrive sync app carry the changes to the
+cloud. No Azure app registration is needed, and Claude can help through the MCP server
+([docs/CLAUDE_CODE.md](docs/CLAUDE_CODE.md)). See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how the
+pieces fit together and what each stage tested.
 
 ```bash
 python -m sorter check my_manifest.csv --root "C:\Users\you\OneDrive"
