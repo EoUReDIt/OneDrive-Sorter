@@ -158,6 +158,14 @@ python -m sorter run my_manifest.csv --root "C:\Users\you\OneDrive" --apply    #
 python -m sorter undo ~/.onedrive-sorter/logs/moves_<timestamp>.jsonl --root "C:\Users\you\OneDrive"
 ```
 
+Or use the browser page with the local backend (recommended; no Azure app registration needed):
+
+```bash
+python -m sorter serve --root "C:\Users\you\OneDrive"
+```
+
+Open the address it prints. Pacing, pause/resume, check, execute and undo all work from the page.
+
 Same guarantees as the browser app: moves only, never overwrites, anything outside the root is
 refused, rows that fail the rules are held back unless you pass `--include-flagged`, and every move is
 logged so it can be undone. Run the tests with `python -m pytest`.

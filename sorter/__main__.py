@@ -24,6 +24,10 @@ def main(argv=None) -> int:
             s.add_argument("--apply", action="store_true", help="really move (default is a dry run)")
             s.add_argument("--delay", type=float, default=0.25, help="seconds between moves")
             s.add_argument("--log-dir", help="where to write the undo log (default ~/.onedrive-sorter/logs)")
+    sv = sub.add_parser("serve", help="start the local backend and print the address to open in your browser")
+    sv.add_argument("--root", required=True)
+    sv.add_argument("--port", type=int, default=8765, help="0 picks a free port")
+    sv.add_argument("--log-dir")
     u = sub.add_parser("undo")
     u.add_argument("log")
     u.add_argument("--root", required=True)
@@ -31,6 +35,10 @@ def main(argv=None) -> int:
     a = p.parse_args(argv)
 
     try:
+        if a.cmd == "serve":
+            from .server import serve
+            serve(a.root, a.port, a.log_dir)
+            return 0
         if a.cmd == "undo":
             rep = engine.undo(a.log, a.root, delay=a.delay)
             for it in rep.failed:

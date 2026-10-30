@@ -56,10 +56,30 @@ silently break an earlier part.
 | Stage | What gets built | What CI checks before moving on |
 | --- | --- | --- |
 | 1 (done) | Engine, rules, manifest loader, command line, undo log | Engine tests on 3 operating systems; the existing browser page still passes its smoke test; the browser copy of the rules must match the Python copy |
-| 2 | Local backend (HTTP on localhost, token, origin checks) and the page switched to call it | API tests against a real server; page smoke test running against the backend; request-rejection tests |
+| 2 (done) | Local backend (HTTP on localhost, token, origin checks) and the page switched to call it | 23 API tests against a real server, including hostile-request tests; the page driven end to end in a browser against the real backend (move, then undo); the old cloud-mode page smoke test still passes |
 | 3 | MCP server over stdio: read-only tools (rules, list a folder, validate a manifest) and a *propose plan* tool that stores a pending plan, never applies it | Protocol test: start the server, list tools, call each one; confirm there is no tool that moves anything |
 | 4 | Connecting Claude Code: a project config file, a walkthrough of the prompts you will see, and a checklist to try it end to end | Config file parses; server starts from the config; tools listed match the documented ones |
 | 5 | Final refactor: one shared rules file, remove duplicated logic in the page, decide whether to keep the old direct-to-Microsoft mode, rewrite the README | Full suite plus an end-to-end test (propose, review, apply, undo) |
+
+## Running the local backend (stage 2)
+
+```bash
+python -m sorter serve --root "C:\Users\you\OneDrive"
+```
+
+It prints an address like `http://127.0.0.1:8765/#token=...`. Open that exact address in your browser.
+The token after `#` is generated fresh on every start; it proves the page is yours. The page removes it
+from the address bar after reading it, and keeps it only for that browser tab. If you restart the
+server, open the new address.
+
+What protects it (all covered by tests): it listens on `127.0.0.1` only; every API call needs the
+token; the `Host` and `Origin` headers must be its own address, which blocks other websites and DNS
+rebinding; it never answers a browser's cross-site "preflight" check; the folder is fixed at start-up
+and the page cannot change it; request sizes are capped; the only file it serves is the page itself;
+there is no delete or overwrite anywhere. The server also re-checks every row itself at execute time,
+so the page cannot talk it into anything the engine would refuse.
+
+Without the token (or opened from a file), the page falls back to the original cloud mode.
 
 ## What you will see when you connect Claude Code (preview, verified in stage 4)
 

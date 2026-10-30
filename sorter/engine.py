@@ -117,8 +117,11 @@ def _log_dir(log_dir) -> Path:
 
 
 def execute(items: list[PlanItem], root, log_dir=None, delay: float = 0.25,
-            sleep=time.sleep, on_event=None) -> Report:
-    """Perform the READY items. Never overwrites; re-checks each move just before doing it."""
+            sleep=time.sleep, on_event=None, before_each=None) -> Report:
+    """Perform the READY items. Never overwrites; re-checks each move just before doing it.
+
+    before_each is called before every move; it may block (pause) and returns False to stop.
+    """
     root = open_root(root)
     report = Report(log_path=_log_dir(log_dir) / f"moves_{datetime.now():%Y%m%d_%H%M%S_%f}.jsonl")
     emit = on_event or (lambda *_: None)
@@ -126,6 +129,8 @@ def execute(items: list[PlanItem], root, log_dir=None, delay: float = 0.25,
         for it in items:
             if it.state != READY:
                 continue
+            if before_each is not None and before_each() is False:
+                break
             try:
                 if os.path.lexists(it.dst):
                     raise EngineError("destination appeared since the check; not overwriting")
