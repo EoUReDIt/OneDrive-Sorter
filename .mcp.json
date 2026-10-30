@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "onedrive-sorter": {
+      "command": "python",
+      "args": ["-m", "sorter", "mcp", "--root", "${ONEDRIVE_SORT_ROOT}"]
+    }
+  }
+}

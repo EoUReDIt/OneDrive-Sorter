@@ -4,3 +4,16 @@
 onedrive_sorter_rclone*.sh
 undo_log_*.tsv
 undo_manifest_*.csv
+
+# ...except the fake sample manifest used by the tests
+!tests/fixtures/*.csv
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Build output
+build/
+dist/
+*.egg-info/

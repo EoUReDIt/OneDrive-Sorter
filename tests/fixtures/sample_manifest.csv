@@ -1,0 +1,6 @@
+SourceFile,DestinationFolder,Category,SubCategory,Confidence,Status,MoveAction,Notes
+Example Resume.pdf,Career/Resume Workspace,Career,Resume,100,Verified,MOVE,"Quoted, with a comma"
+Interview Folder,Career/Interviews,Career,Interview,95,Verified,MOVE,Folder move
+Employer Notes,Career/Employers/Acme,Career,Employers,95,Verified,MOVE,Nested new folder
+Clearance Form.pdf,Career/Security Clearance,Career,Security Clearance,100,Verified,MOVE,
+Course Deck.pptx,Academic/ARIN 350/Final Presentation,Academic,ARIN 350,100,Verified,MOVE,Not a rule-defined Academic folder

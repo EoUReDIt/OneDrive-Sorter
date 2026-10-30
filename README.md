@@ -1,14 +1,25 @@
 # OneDrive Sorter
 
-A single-page, browser-only app that sorts a personal OneDrive from a **reviewed move manifest**.
-There is no backend, no API key and no AI call at run time. Your Microsoft token goes from Microsoft
-straight into the page's memory (MSAL.js, OAuth 2.0 PKCE) and is never sent anywhere else.
+Sorts a personal OneDrive from a **reviewed move manifest**: a CSV that says "move this item to that
+folder". Nothing moves until a person checks the plan and presses Execute, nothing is ever deleted or
+overwritten, and every run can be undone.
+
+It works in two ways:
+
+- **Local mode (recommended):** a small program on your computer sorts your OneDrive *folder* and the
+  OneDrive sync app carries the changes to the cloud. No Azure app registration and no tokens. Claude
+  can help (using your own Claude login, no API key) by *proposing* plans through an MCP server that
+  physically cannot move files.
+- **Cloud mode:** the browser page signs in to Microsoft and moves files through the Graph API. It needs
+  a free Azure app registration and has no Claude integration.
+
+> **Quick setup is at the bottom of this file**, followed by the deployment options.
 
 > Governing principle: *Recovery First, Verification Second, Organization Third, Automation Last.*
 
 ## What it does
 
-1. Loads a manifest CSV. (Either use the steps below, or see the rclone alternative if you do not want to register an app.)
+1. Loads a manifest CSV (or, in local mode, a plan Claude proposed).
 2. Validates every row against the rules (below). Rows that fail are unchecked, with the reason shown.
 3. **Check** (read-only): finds each source in OneDrive and reports `ready`, `already there`,
    `source not found` or `name conflict`. It also lists the destination folders that will be created.
@@ -62,7 +73,9 @@ A row is also held back when `MoveAction` is not `MOVE`, `Status` is not `Verifi
 destination is empty, or the destination contains `.` / `..` segments. You can still tick a held-back
 row to accept the exception.
 
-## Setup
+## Cloud mode setup (Azure app registration)
+
+Only needed for cloud mode. Local mode needs none of this.
 
 ### 1. Register an app with your personal Microsoft account (once, free)
 
@@ -145,6 +158,57 @@ slider value at export time); and it appends every move to `undo_log_<timestamp>
 command in the script header to reverse them. If it cannot tell whether a path exists (for example a
 network error), it reports an error and does not move that item.
 
+## Local mode (recommended)
+
+Sort the OneDrive folder on your own computer and let the OneDrive sync app carry the changes to the
+cloud. No Azure app registration is needed, and Claude can help through the MCP server
+([docs/CLAUDE_CODE.md](docs/CLAUDE_CODE.md)). See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how the
+pieces fit together and what each stage tested.
+
+```bash
+onedrive-sorter check my_manifest.csv --root "C:\Users\you\OneDrive"
+onedrive-sorter run my_manifest.csv --root "C:\Users\you\OneDrive"            # dry run
+onedrive-sorter run my_manifest.csv --root "C:\Users\you\OneDrive" --apply    # really move
+onedrive-sorter undo ~/.onedrive-sorter/logs/moves_<timestamp>.jsonl --root "C:\Users\you\OneDrive"
+```
+
+(From an unpacked copy of the project without installing, `python -m sorter` does the same thing.)
+
+Or use the browser page with the local backend (recommended):
+
+```bash
+onedrive-sorter serve --root "C:\Users\you\OneDrive"
+```
+
+Open the address it prints. Pacing, pause/resume, check, execute and undo all work from the page.
+
+### Claude and other AI tools
+
+`onedrive-sorter mcp --root <folder>` is an MCP server that Claude Code starts for you
+([docs/CLAUDE_CODE.md](docs/CLAUDE_CODE.md)). Claude can read the rules, look at names, types, sizes and
+dates, dry-run a draft and *propose* a plan. It has no tool that can move anything; you load the proposal in
+the page (**Proposals from Claude**), check it, and press Execute yourself.
+
+### Context files for AI tools (optional)
+
+Guides and notes that outlive any one chat. In the page there is a card **Context files for AI tools** with a
+checkbox ("There are context files") and a location selector:
+
+- **Built-in guides:** this README, [docs/TESTING.md](docs/TESTING.md) and
+  [docs/USAGE_FOR_AI.md](docs/USAGE_FOR_AI.md), shipped inside the app.
+- **Another folder on this computer:** your own notes, for example a copy of those guides kept in a shared
+  AI workspace folder. Only plain text files (`.md`, `.txt`, `.csv`, `.json`) directly inside it are shared.
+
+They are **advisory only**: they never override what you or Claude decide, the folder rules, or the safety
+limits, and the tools hand them over labelled as reference material, not instructions. Off by default;
+the setting is stored in `~/.onedrive-sorter/config.json`; the MCP server re-reads it on every call, so turning
+it on or off applies at once without restarting Claude Code. If you choose a folder inside the folder being
+sorted, the page warns you so you do not accidentally include the guides in a plan.
+
+Same guarantees as the browser app: moves only, never overwrites, anything outside the root is
+refused, rows that fail the rules are held back unless you pass `--include-flagged`, and every move is
+logged so it can be undone. Run the tests with `python -m pytest`.
+
 ## Notes
 
 - Sources are resolved by name from the OneDrive root. If the same name exists elsewhere, use a path
@@ -189,3 +253,74 @@ Things to know:
   **Settings > Pages** for what your plan allows.
 - **Alternatives to Pages.** Any static host works the same way, as long as the redirect URI you
   register matches the page URL. For local use, `python3 -m http.server 8080` is enough.
+
+## Quick setup
+
+Local mode with Claude, about ten minutes. Practise on a throwaway folder first.
+
+1. **You need:** Python 3.11 or newer (on Windows tick "Add python.exe to PATH" in the installer), the
+   OneDrive sync app signed in and **fully synced**, and, optionally, Claude Code signed in.
+2. **Get the project:** on GitHub choose *Code > Download ZIP* and extract it anywhere (where you extract it
+   does not matter), or `git clone` it. Open a terminal inside the extracted folder.
+3. **Install:**
+   ```bash
+   python -m pip install ".[mcp]"
+   ```
+   On Windows use `py -m pip install ".[mcp]"` if `python` is not found. This adds the `onedrive-sorter`
+   command. (A virtual environment or `pipx` keeps it tidy if you prefer.)
+4. **Find your OneDrive folder.** Open it in File Explorer or Finder and copy the path. Usually
+   `C:\Users\<you>\OneDrive` on Windows (PowerShell: `$env:OneDriveConsumer` for a personal account), or
+   `~/Library/CloudStorage/OneDrive-Personal` on a Mac.
+5. **Practise safely.** Inside OneDrive make a folder `Sorter Test` with a couple of dummy files, and a
+   manifest for them (see [Manifest format](#manifest-format)). Then a dry run, which changes nothing:
+   ```bash
+   onedrive-sorter check manifest.csv --root "C:\Users\<you>\OneDrive\Sorter Test"
+   ```
+6. **Open the page:**
+   ```bash
+   onedrive-sorter serve --root "C:\Users\<you>\OneDrive\Sorter Test"
+   ```
+   Open the address it prints (it contains a one-time token). Load the manifest, press **Check**, read the
+   table, press **Execute**, then try **Undo last run**.
+7. **Connect Claude (optional):** in the project folder run
+   ```bash
+   claude mcp add onedrive-sorter -- onedrive-sorter mcp --root "C:\Users\<you>\OneDrive\Sorter Test"
+   ```
+   `claude mcp list` should show it connected. In Claude Code type `/mcp__onedrive-sorter__sort_folder`, approve
+   the tool prompts, then load Claude's plan under **Proposals from Claude** in the page. Details and
+   troubleshooting: [docs/CLAUDE_CODE.md](docs/CLAUDE_CODE.md).
+8. **Context files (optional):** in the page tick *There are context files* and pick the built-in guides or
+   your own folder. Ask Claude to read them (`list_context_files`).
+9. **Go live:** repeat steps 6 and 7 with `--root` pointing at your real OneDrive folder, starting with a
+   small plan. Everything is logged, so **Undo last run** reverses a mistake.
+
+## Ways to deploy
+
+Which to pick depends on who will use it. Options 1 and 4 exist today; 2 and 3 are recommended next steps
+and are not built yet.
+
+| # | Way | Best for | Good | Watch out for | Status |
+| --- | --- | --- | --- | --- | --- |
+| 1 | **Install with pip or pipx** from the project (`pip install ".[mcp]"`, or from GitHub once the repository is public or you are signed in) | You, or anyone comfortable with a terminal | One command; easy updates; the built package is tested on Windows, macOS and Linux on every push | Needs Python | Built and CI-tested |
+| 2 | **Portable zip with a launcher** (`start.bat` for Windows, `start.command` for Mac): extract, double-click, it finds Python, installs, asks which folder, and opens the page | People who do not use a terminal | No install knowledge needed; extract location does not matter | Still needs Python unless it is bundled; a launcher script per OS to maintain | Recommended; not built |
+| 3 | **Single-file executable** built by a GitHub Actions release workflow (PyInstaller): download one `.exe` or app | The widest audience | No Python needed | Large file; Windows SmartScreen and macOS Gatekeeper warnings without code signing; one build per OS | Recommended; not built |
+| 4 | **Static page on GitHub Pages (cloud mode)**: the page signs in to Microsoft ([walkthrough](#hosting-on-github-pages-walkthrough)) | People who cannot install anything | Nothing to install | Needs an Azure app registration; no local backend, no Claude integration; the Pages site is public | Built |
+
+My recommendation: option 1 now (it is what the CI proves works), then option 2 for non-technical users, and
+option 3 only if you need to hand it to people without Python.
+
+### Should it prompt for the folder?
+
+Yes, but the **launcher** should ask, not the web page, and the install or extract location is irrelevant.
+
+- The folder that gets sorted is a safety decision, so it is fixed when the program starts and the page can never
+  change it (this is what stops a web page or an AI from steering the program at another folder).
+- A good launcher would: look for your OneDrive folder automatically (Windows exposes it through
+  `OneDriveConsumer`/`OneDrive` environment variables; on a Mac it is under `~/Library/CloudStorage`), show what
+  it found and ask you to confirm, fall back to a native folder picker (or a typed path), remember the answer
+  in a small settings file, and warn if the folder is not fully synced or not inside OneDrive.
+- Then it starts `onedrive-sorter serve --root <the confirmed folder>`.
+
+Today you pass `--root` yourself. A prompting launcher is not built yet; it is the natural first piece of
+option 2 and a small job.
+

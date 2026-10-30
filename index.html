@@ -4,7 +4,6 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>OneDrive Sorter</title>
-  <script src="https://alcdn.msauth.net/browser/2.35.0/js/msal-browser.min.js"></script>
   <style>
     body { font-family: sans-serif; max-width: 1000px; margin: 40px auto; padding: 0 20px; line-height: 1.5; }
     .card { border: 1px solid #ccc; padding: 16px; border-radius: 8px; margin-bottom: 20px; }
@@ -21,7 +20,13 @@
   <p>Governing principle: <em>Recovery First, Verification Second, Organization Third, Automation Last.</em>
      Moves only. Nothing is ever deleted, overwritten or renamed.</p>
 
-  <div class="card">
+  <div class="card" id="card-local" style="display:none">
+    <h3>1. Local folder</h3>
+    <p>Sorting <code id="local-root"></code> on this computer. OneDrive's sync app carries the changes to the cloud.
+       Nothing here talks to Microsoft.</p>
+  </div>
+
+  <div class="card" id="card-cloud">
     <h3>1. Connect OneDrive</h3>
     <div class="controls">
       <label>Azure client ID (SPA): <input id="client-id" size="40"></label>
@@ -30,9 +35,36 @@
     </div>
   </div>
 
+  <div class="card" id="card-context" style="display:none">
+    <h3>Context files for AI tools (optional)</h3>
+    <p>Guides and notes (README, testing and usage guides, or your own) that Claude and other AI tools can read
+       for background, including in future chats. They are <strong>advisory</strong>: they never override what you
+       or Claude decide, the folder rules, or the safety limits. Off unless you turn it on.</p>
+    <label><input type="checkbox" id="ctx-enabled" onchange="saveContext()"> There are context files &mdash; share them with AI tools</label>
+    <div class="controls">
+      <label>Where:
+        <select id="ctx-location" onchange="saveContext()">
+          <option value="builtin">Built-in guides (shipped with this app)</option>
+          <option value="custom">Another folder on this computer&hellip;</option>
+        </select>
+      </label>
+      <input id="ctx-path" size="55" style="display:none" placeholder="Full path to the folder, e.g. C:\Users\you\OneDrive\AI Shared Workspace\OneDrive Sorter">
+      <button id="ctx-apply" onclick="saveContext()" style="display:none">Use this folder</button>
+    </div>
+    <div id="ctx-status"></div>
+    <ul id="ctx-files"></ul>
+  </div>
+
   <div class="card">
     <h3>2. Load manifest</h3>
     <input type="file" id="manifest-file" accept=".csv" onchange="loadManifest(this.files[0])">
+    <div id="proposals-box" style="display:none; margin: 8px 0;">
+      <strong>Proposals from Claude:</strong>
+      <select id="proposal-select"></select>
+      <button onclick="loadProposal()">Load proposal</button>
+      <button onclick="refreshProposals()">Refresh</button>
+      <div id="proposal-note"></div>
+    </div>
     <p id="manifest-summary"></p>
     <table id="plan"><thead></thead><tbody></tbody></table>
   </div>
@@ -90,12 +122,22 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const enc = path => path.split('/').filter(Boolean).map(encodeURIComponent).join('/');
 
 // ---------- Auth ----------
+const MSAL_URL = 'https://alcdn.msauth.net/browser/2.35.0/js/msal-browser.min.js';
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    if (window.msal) return resolve();
+    const el = document.createElement('script');
+    el.src = src; el.onload = resolve; el.onerror = () => reject(new Error('could not load ' + src));
+    document.head.appendChild(el);
+  });
+}
 try { document.getElementById('client-id').value = localStorage.getItem('clientId') || ''; } catch (e) {}
 async function loginOneDrive() {
   const clientId = document.getElementById('client-id').value.trim();
   if (!clientId) return alert('Enter your Azure client ID first.');
   try { localStorage.setItem('clientId', clientId); } catch (e) {}
   try {
+    await loadScript(MSAL_URL);          // only cloud mode needs Microsoft's script
     msalInstance = new msal.PublicClientApplication({
       auth: { clientId, authority: 'https://login.microsoftonline.com/consumers', redirectUri: location.origin + location.pathname }
     });
@@ -172,6 +214,7 @@ function loadManifest(file) {
   if (!file) return;
   const reader = new FileReader();
   reader.onload = () => {
+    if (local) return loadManifestLocal(reader.result);
     const table = parseCSV(reader.result);
     const header = table.shift().map(h => h.trim());
     const missing = REQUIRED_COLUMNS.filter(c => !header.includes(c));
@@ -216,9 +259,9 @@ function render() {
 }
 function set(r, state, cls, detail) { r.state = state; r.cls = cls; r.detail = detail || ''; render(); }
 function refreshButtons() {
-  document.getElementById('btn-check').disabled = !(account && rows.length) || running;
+  document.getElementById('btn-check').disabled = !((account || local) && rows.length) || running;
   document.getElementById('btn-run').disabled = !rows.some(r => r.state === 'ready') || running;
-  document.getElementById('btn-undo').disabled = !undoRecords.length;
+  document.getElementById('btn-undo').disabled = local ? (!lastLog || running) : !undoRecords.length;
   document.getElementById('btn-rclone').disabled = !rows.length;
 }
 
@@ -230,6 +273,7 @@ async function lookup(path) {
   return res.json();
 }
 async function runCheck() {
+  if (local) return runCheckLocal();
   running = true; refreshButtons();
   log('Check started (read-only).');
   const toCreate = new Set();
@@ -277,6 +321,7 @@ async function ensureFolder(path) {
   return parentId;
 }
 async function runExecute() {
+  if (local) return runExecuteLocal();
   const todo = rows.filter(r => r.selected && r.state === 'ready');
   if (!todo.length || !confirm(`Move ${todo.length} item(s)? Nothing will be deleted or overwritten.`)) return;
   running = true; isPaused = false; cursor = 0; refreshButtons();
@@ -307,10 +352,191 @@ async function loop() {
   refreshButtons();
 }
 function togglePause() {
+  if (local) return togglePauseLocal();
   isPaused = !isPaused;
   document.getElementById('btn-pause').textContent = isPaused ? 'Resume' : 'Pause';
   if (!isPaused && running) loop();
 }
+
+// ---------- Local mode (page served by `python -m sorter serve`) ----------
+let local = null, localToken = '', lastLog = '';
+async function api(method, path, body) {
+  const res = await fetch(path, {
+    method,
+    headers: { Authorization: 'Bearer ' + localToken, ...(body ? { 'Content-Type': 'application/json' } : {}) },
+    body: body ? JSON.stringify(body) : undefined
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+  return data;
+}
+async function detectLocal() {
+  if (location.protocol !== 'http:') return;
+  const m = location.hash.match(/token=([^&]+)/);
+  try {
+    if (m) sessionStorage.setItem('sorterToken', decodeURIComponent(m[1]));
+    localToken = sessionStorage.getItem('sorterToken') || '';
+  } catch (e) { localToken = m ? decodeURIComponent(m[1]) : ''; }
+  if (!localToken) return;
+  try { local = await api('GET', 'api/info'); } catch (e) { local = null; return; }
+  history.replaceState(null, '', location.pathname);        // keep the token out of the address bar
+  document.getElementById('card-cloud').style.display = 'none';
+  document.getElementById('card-local').style.display = '';
+  document.getElementById('local-root').textContent = local.root;
+  const slider = document.getElementById('rate-slider');
+  slider.min = 0; slider.max = 2000; slider.step = 50; slider.value = 250; updateRate(250);
+  document.getElementById('btn-undo').textContent = 'Undo last run';
+  document.getElementById('card-context').style.display = '';
+  loadContext();
+  document.getElementById('proposals-box').style.display = '';
+  refreshProposals();
+  log('Local mode: ' + local.root);
+  refreshButtons();
+}
+function setLocalRows(serverRows) {
+    rows = serverRows.map(r => ({
+      n: r.n, SourceFile: r.fields.SourceFile, DestinationFolder: r.fields.DestinationFolder,
+      destFolder: r.dest_folder, Confidence: r.fields.Confidence, selected: r.selected, problems: r.problems,
+      state: r.problems.length ? 'needs review' : 'not checked', cls: r.problems.length ? 'warn' : '',
+      detail: r.problems.join('; ')
+    }));
+    lastLog = '';
+    log(`Loaded ${rows.length} manifest row(s); ${rows.filter(r => r.problems.length).length} need review.`);
+    render(); refreshButtons();
+}
+// Context files: a checkbox and a location choice. The server validates the folder and remembers the choice
+// in a settings file that the MCP server re-reads on every call. File names and messages are untrusted text.
+function showContext(c) {
+  document.getElementById('ctx-enabled').checked = c.enabled;
+  document.getElementById('ctx-location').value = c.location;
+  const custom = c.location === 'custom';
+  document.getElementById('ctx-path').style.display = custom ? '' : 'none';
+  document.getElementById('ctx-apply').style.display = custom ? '' : 'none';
+  if (custom && c.path) document.getElementById('ctx-path').value = c.path;
+  const list = document.getElementById('ctx-files'); list.textContent = '';
+  c.files.forEach(f => { const li = document.createElement('li'); li.textContent = `${f.name} (${f.size} bytes)`; list.appendChild(li); });
+  const status = !c.enabled ? 'Not shared. AI tools see no context files.'
+    : c.problem ? c.problem : `Sharing ${c.files.length} file(s) with AI tools. Changes apply immediately, with no restart.`;
+  document.getElementById('ctx-status').textContent = status + (c.warning ? ' ' + c.warning : '');
+}
+async function loadContext() {
+  try { showContext(await api('GET', 'api/context')); } catch (e) { log('Could not read context settings: ' + e.message); }
+}
+async function saveContext() {
+  const location = document.getElementById('ctx-location').value;
+  document.getElementById('ctx-path').style.display = location === 'custom' ? '' : 'none';
+  document.getElementById('ctx-apply').style.display = location === 'custom' ? '' : 'none';
+  if (location === 'custom' && !document.getElementById('ctx-path').value.trim()) {
+    document.getElementById('ctx-status').textContent = 'Type the full path of the folder, then press "Use this folder".';
+    return;                                              // nothing to save until there is a path
+  }
+  try {
+    showContext(await api('POST', 'api/context', {
+      enabled: document.getElementById('ctx-enabled').checked, location,
+      path: document.getElementById('ctx-path').value
+    }));
+  } catch (e) {
+    document.getElementById('ctx-status').textContent = 'Not saved: ' + e.message;
+    try { const keep = await api('GET', 'api/context'); document.getElementById('ctx-enabled').checked = keep.enabled; } catch (_) {}
+  }
+}
+function loadManifestLocal(text) {
+  api('POST', 'api/manifest', { csv: text }).then(data => setLocalRows(data.rows))
+    .catch(e => log('Manifest rejected: ' + e.message));
+}
+async function refreshProposals() {
+  try {
+    const data = await api('GET', 'api/proposals');
+    const sel = document.getElementById('proposal-select');
+    sel.textContent = '';
+    data.proposals.forEach(p => {
+      const o = document.createElement('option');
+      o.value = p.name;                                           // all of this text is untrusted: text only
+      o.textContent = `${p.created || p.name} (${Object.values(p.summary || {}).reduce((a, b) => a + b, 0)} rows)`;
+      sel.appendChild(o);
+    });
+    if (!data.proposals.length) { const o = document.createElement('option'); o.textContent = 'none yet'; o.disabled = true; sel.appendChild(o); }
+  } catch (e) { log('Could not list proposals: ' + e.message); }
+}
+async function loadProposal() {
+  const name = document.getElementById('proposal-select').value;
+  if (!name) return;
+  try {
+    const data = await api('POST', 'api/proposal', { name });
+    document.getElementById('proposal-note').textContent = data.note ? 'Claude\'s note: ' + data.note : '';
+    setLocalRows(data.rows);
+  } catch (e) { log('Could not load proposal: ' + e.message); }
+}
+async function runCheckLocal() {
+  running = true; refreshButtons(); log('Check started (read-only).');
+  try {
+    const data = await api('POST', 'api/check', { selected: rows.filter(r => r.selected).map(r => r.n) });
+    const by = new Map(data.items.map(i => [i.n, i]));
+    rows.forEach(r => {
+      const i = by.get(r.n); if (!i) return;
+      r.state = i.state; r.detail = i.detail;
+      r.cls = (i.state === 'ready' || i.state === 'already there') ? 'ok' : (i.state === 'not selected' ? 'warn' : 'bad');
+    });
+    render();
+    log('Check finished. Only rows marked "ready" will be executed.');
+    const make = [...new Set(data.items.filter(i => i.state === 'ready' && /will be created/.test(i.detail)).map(i => i.dest_folder))];
+    if (make.length) log(`Folders that will be created (missing segments only): ${make.join(' | ')}`);
+  } catch (e) { log('Check failed: ' + e.message); }
+  running = false; refreshButtons();
+}
+async function runExecuteLocal() {
+  const ready = rows.filter(r => r.selected && r.state === 'ready');
+  if (!ready.length || !confirm(`Move ${ready.length} item(s)? Nothing will be deleted or overwritten.`)) return;
+  running = true; isPaused = false; refreshButtons();
+  const pause = document.getElementById('btn-pause'); pause.disabled = false; pause.textContent = 'Pause';
+  try {
+    await api('POST', 'api/execute', { selected: ready.map(r => r.n), delay: delayMs / 1000 });
+    pollJob();
+  } catch (e) { log('Execute failed: ' + e.message); running = false; refreshButtons(); }
+}
+async function pollJob() {
+  const applied = new Set();
+  for (;;) {
+    let job;
+    try { job = await api('GET', 'api/job'); } catch (e) { log('Lost the backend: ' + e.message); break; }
+    job.events.forEach(ev => {
+      if (applied.has(ev.n)) return; applied.add(ev.n);
+      const r = rows.find(x => x.n === ev.n);
+      if (r) { r.state = ev.state; r.detail = ev.detail; r.cls = ev.state === 'moved' ? 'ok' : 'bad'; }
+      log(ev.state === 'moved' ? `Moved "${ev.source}"` : `FAILED "${ev.source}": ${ev.detail}`);
+    });
+    render();
+    if (job.status !== 'running' && job.status !== 'paused') {
+      lastLog = job.log;
+      if (job.error) log('Run error: ' + job.error);
+      log(`Done. Moved ${job.moved}; failed ${job.failed}.` + (job.status === 'stopped' ? ' (stopped early)' : ''));
+      break;
+    }
+    await sleep(300);
+  }
+  running = false; document.getElementById('btn-pause').disabled = true; refreshButtons();
+}
+async function togglePauseLocal() {
+  const want = !isPaused;
+  try {
+    await api('POST', want ? 'api/job/pause' : 'api/job/resume', {});
+    isPaused = want;
+    document.getElementById('btn-pause').textContent = isPaused ? 'Resume' : 'Pause';
+  } catch (e) { log('Pause/resume failed: ' + e.message); }
+}
+async function undoLocal() {
+  if (!lastLog || !confirm('Move everything from the last run back to where it was?')) return;
+  try {
+    const res = await api('POST', 'api/undo', { log: lastLog, delay: delayMs / 1000 });
+    log(`Undone ${res.moved}; failed ${res.failed.length}.`);
+    res.failed.forEach(f => log(`  FAILED ${f.source}: ${f.detail}`));
+    rows.forEach(r => { if (r.state === 'moved') { r.state = 'undone'; r.cls = 'warn'; r.detail = 'moved back'; } });
+    lastLog = ''; render();
+  } catch (e) { log('Undo failed: ' + e.message); }
+  refreshButtons();
+}
+window.addEventListener('hashchange', detectLocal);   // a fresh link pasted into an open tab
+detectLocal();
 
 // ---------- rclone export (no app registration needed) ----------
 const shq = v => "'" + String(v).replace(/'/g, "'\\''") + "'";
@@ -362,6 +588,7 @@ function exportRclone() {
 
 // ---------- Undo record (same schema as the manifest, new location -> original folder) ----------
 function downloadUndo() {
+  if (local) return undoLocal();
   const lines = [REQUIRED_COLUMNS.join(',')];
   undoRecords.forEach(u => lines.push([u.to + '/' + u.name, u.from, 'Undo', '', 100, 'Verified', 'MOVE', 'Reverses a move; empty DestinationFolder = OneDrive root'].map(csvCell).join(',')));
   const a = document.createElement('a');

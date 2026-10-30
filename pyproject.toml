@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "onedrive-sorter"
+version = "0.1.0"
+description = "Apply a reviewed move manifest to a local OneDrive folder"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+mcp = ["mcp>=2,<3"]
+
+[project.scripts]
+onedrive-sorter = "sorter.__main__:main"
+
+[tool.setuptools]
+packages = ["sorter"]
+
+[tool.setuptools.package-data]
+sorter = ["rules.json", "web/*.html", "context/*.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
