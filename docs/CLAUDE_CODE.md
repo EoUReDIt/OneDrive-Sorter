@@ -61,6 +61,7 @@ If it shows `Failed to connect`, `claude mcp get onedrive-sorter` explains why. 
 | `No module named mcp` | `pip install "mcp>=2,<3"` for the **same** Python the command uses |
 | `No module named sorter` | Start `claude` from the project folder (or `pip install -e .` once) |
 | Root is not a folder | Fix the path; quote it if it has spaces |
+| `Connection closed` right after starting (way B) | `ONEDRIVE_SORT_ROOT` is not set in the terminal you started `claude` from, so the server received the literal text `${ONEDRIVE_SORT_ROOT}` and exited. Set it and restart `claude` |
 | Way B: missing environment variable | Set `ONEDRIVE_SORT_ROOT` in the terminal you start `claude` from |
 
 ## Use it

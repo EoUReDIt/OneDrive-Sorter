@@ -45,6 +45,13 @@ class Report:
 
 
 def open_root(root) -> Path:
+    text = str(root).strip()
+    if not text:
+        raise EngineError("No folder given. Pass the folder to sort with --root (an empty value would mean "
+                          "'the current folder', which is never what you want).")
+    if "${" in text or text.startswith("%") and text.endswith("%"):
+        raise EngineError(f"The folder is an unexpanded placeholder ({text}). The environment variable behind it "
+                          "is not set; set it to your OneDrive folder in the terminal you start Claude Code from.")
     real = Path(os.path.realpath(root))
     if not real.is_dir():
         raise EngineError(f"Root is not a folder: {root}")

@@ -156,3 +156,15 @@ def test_execute_only_touches_ready_items(tree, tmp_path):
 def test_open_root_rejects_missing_folder(tmp_path):
     with pytest.raises(engine.EngineError):
         engine.open_root(tmp_path / "missing")
+
+
+@pytest.mark.parametrize("bad", ["", "   ", "\t"])
+def test_an_empty_root_is_refused_not_treated_as_the_current_folder(bad):
+    with pytest.raises(engine.EngineError, match="No folder given"):
+        engine.open_root(bad)
+
+
+@pytest.mark.parametrize("placeholder", ["${ONEDRIVE_SORT_ROOT}", "%ONEDRIVE_SORT_ROOT%"])
+def test_an_unexpanded_placeholder_gets_an_actionable_message(placeholder):
+    with pytest.raises(engine.EngineError, match="environment variable"):
+        engine.open_root(placeholder)

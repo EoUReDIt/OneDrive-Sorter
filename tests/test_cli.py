@@ -43,3 +43,9 @@ def test_include_flagged_moves_the_flagged_row(tmp_path):
 
 def test_bad_root_exits_2(tmp_path, capsys):
     assert main(["check", FIXTURE, "--root", str(tmp_path / "nope")]) == 2
+
+
+def test_empty_and_placeholder_roots_exit_2_with_a_clear_message(tmp_path, capsys):
+    for bad, words in (("", "No folder given"), ("${ONEDRIVE_SORT_ROOT}", "environment variable")):
+        assert main(["check", FIXTURE, "--root", bad]) == 2
+        assert words in capsys.readouterr().err
