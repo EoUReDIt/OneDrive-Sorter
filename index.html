@@ -226,6 +226,7 @@ async function lookup(path) {
 async function runCheck() {
   running = true; refreshButtons();
   log('Check started (read-only).');
+  const toCreate = new Set();
   for (const r of rows) {
     if (!r.selected) continue;
     try {
@@ -237,7 +238,10 @@ async function runCheck() {
         const destParent = await lookup(r.destFolder);
         if (parent === r.destFolder) set(r, 'already there', 'ok', 'Skipped');
         else if (await lookup(r.destFolder + '/' + item.name)) set(r, 'name conflict', 'bad', 'Destination already has an item with this name; will not overwrite');
-        else set(r, 'ready', 'ok', destParent ? 'Destination exists' : 'Destination folder will be created');
+        else {
+          if (!destParent) toCreate.add(r.destFolder);
+          set(r, 'ready', 'ok', destParent ? 'Destination exists' : 'Destination folder will be created');
+        }
         r.origParent = parent;
       }
     } catch (err) { set(r, 'check failed', 'bad', err.message); }
@@ -245,6 +249,7 @@ async function runCheck() {
   }
   running = false; refreshButtons();
   log('Check finished. Only rows marked "ready" will be executed.');
+  if (toCreate.size) log(`Folders that will be created (missing segments only): ${[...toCreate].join(' | ')}`);
 }
 
 // ---------- Execute ----------
@@ -290,7 +295,10 @@ async function loop() {
     await sleep(delayMs);
   }
   running = false; document.getElementById('btn-pause').disabled = true;
-  log('All selected rows processed.'); refreshButtons();
+  const failed = rows.filter(r => r.state === 'failed');
+  log(`Done. Moved ${undoRecords.length}; failed ${failed.length}.`);
+  failed.forEach(r => log(`  FAILED #${r.n} ${r.SourceFile}: ${r.detail}`));
+  refreshButtons();
 }
 function togglePause() {
   isPaused = !isPaused;
