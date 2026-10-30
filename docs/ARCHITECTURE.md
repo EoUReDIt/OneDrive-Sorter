@@ -58,7 +58,7 @@ silently break an earlier part.
 | 1 (done) | Engine, rules, manifest loader, command line, undo log | Engine tests on 3 operating systems; the existing browser page still passes its smoke test; the browser copy of the rules must match the Python copy |
 | 2 (done) | Local backend (HTTP on localhost, token, origin checks) and the page switched to call it | 23 API tests against a real server, including hostile-request tests; the page driven end to end in a browser against the real backend (move, then undo); the old cloud-mode page smoke test still passes |
 | 3 (done) | MCP server over stdio: read-only tools (rules, list a folder, validate a manifest) and a *propose plan* tool that stores a plan for you to review, never applies it; a "Proposals from Claude" picker in the page | 30 tests that run the real server with the real MCP client: exact tool list, no tool that can move anything, the sorted folder is byte-for-byte unchanged after every tool is called, path escapes refused with a readable reason, hostile file names neutralised; backend and browser tests for loading a proposal |
-| 4 | Connecting Claude Code: a project config file, a walkthrough of the prompts you will see, and a checklist to try it end to end | Config file parses; server starts from the config; tools listed match the documented ones |
+| 4 (done) | Connecting Claude Code: a project `.mcp.json`, a `/mcp__onedrive-sorter__sort_folder` prompt served by the MCP server, and a walkthrough ([CLAUDE_CODE.md](CLAUDE_CODE.md)) of the approval prompts, troubleshooting and the optional read-only allow-list | The project config is used to start the real server and list its tools and prompt; every tool named in the docs must exist; the settings example must be valid and allow only read-only tools |
 | 5 | Final refactor: one shared rules file, remove duplicated logic in the page, decide whether to keep the old direct-to-Microsoft mode, rewrite the README | Full suite plus an end-to-end test (propose, review, apply, undo) |
 
 ## Running the local backend (stage 2)
@@ -107,13 +107,12 @@ names as data, strips control characters from them, and, more importantly, nothi
 applied without your review. And Claude only ever sees names, types, sizes and dates, so it cannot
 read your files; your SF-86 and similar documents are never opened.
 
-## What you will see when you connect Claude Code (preview, verified in stage 4)
+## What you will see when you connect Claude Code
 
-Claude Code asks for your approval at two points. First, when it finds a project-level server config
-it asks whether to trust and enable that server. Second, it asks permission each time Claude wants to
-run one of the server's tools, unless you have explicitly allowed that tool. Read-only tools are
-reasonable to allow; the plan-proposing tool is worth leaving on "ask". The exact wording and
-commands will be confirmed against Claude Code's current documentation when stage 4 is built.
+Verified against Claude Code's current documentation and written up step by step in
+[CLAUDE_CODE.md](CLAUDE_CODE.md): an approval prompt for a server defined in a project `.mcp.json`
+(skipped if you add the server yourself with `claude mcp add`), then a permission prompt each time
+Claude wants to use one of the tools, unless you allow-list the read-only ones.
 
 ## Decisions and open questions
 
