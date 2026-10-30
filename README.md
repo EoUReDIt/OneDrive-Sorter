@@ -8,7 +8,7 @@ straight into the page's memory (MSAL.js, OAuth 2.0 PKCE) and is never sent anyw
 
 ## What it does
 
-1. Loads a manifest CSV.
+1. Loads a manifest CSV. (Either use the steps below, or see the rclone alternative if you do not want to register an app.)
 2. Validates every row against the rules (below). Rows that fail are unchecked, with the reason shown.
 3. **Check** (read-only): finds each source in OneDrive and reports `ready`, `already there`,
    `source not found` or `name conflict`. It also lists the destination folders that will be created.
@@ -124,6 +124,26 @@ then open `http://localhost:8080/` and register `http://localhost:8080/` as the 
 3. Click **Check**, read the table and the log, untick anything you do not want.
 4. Click **Execute checked rows** and confirm.
 5. Download the undo record when done.
+
+## Alternative: rclone (no app registration)
+
+If you would rather not register an Azure app, the app can export the selected rows as a bash script
+for [rclone](https://rclone.org), which ships its own Microsoft client ID. This runs on your computer,
+not in the browser, and does not need you to sign in to the page at all.
+
+1. Install rclone and run `rclone config`: choose a new remote, name it `onedrive`, storage type
+   `onedrive`, leave the client ID and secret blank, choose **Microsoft Cloud Global**, and sign in with
+   your personal account when the browser opens. Pick the **OneDrive Personal** drive when asked.
+2. Load the manifest in the page and optionally run no other step (Check needs sign-in, so skip it).
+   Untick rows you do not want and click **Export rclone script**.
+3. Dry run (default, changes nothing): `bash onedrive_sorter_rclone.sh onedrive`
+4. Real run: `DRY=0 bash onedrive_sorter_rclone.sh onedrive`
+
+The script has the same guarantees as the app: it only moves; it skips a row if the source is missing
+or the destination name already exists; it creates missing folders; it waits between moves (the pacing
+slider value at export time); and it appends every move to `undo_log_<timestamp>.tsv`, with a one-line
+command in the script header to reverse them. If it cannot tell whether a path exists (for example a
+network error), it reports an error and does not move that item.
 
 ## Notes
 
