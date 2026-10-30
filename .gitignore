@@ -4,3 +4,6 @@
 onedrive_sorter_rclone*.sh
 undo_log_*.tsv
 undo_manifest_*.csv
+
+# ...except the fake sample manifest used by the tests
+!tests/fixtures/*.csv
