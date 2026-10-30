@@ -1,0 +1,2 @@
+# Manifests contain real file names; keep them local
+*.csv
